@@ -10,6 +10,8 @@ describe('Production Environment Secrets Guardrail (Phase 10)', () => {
   const baseValidProdEnv = {
     NODE_ENV: 'production',
     DATABASE_URL: 'postgresql://prod_user:secret@postgres.internal:5432/frankly_prod',
+    // DIRECT_URL is required in production (Phase 11 Supabase migration readiness)
+    DIRECT_URL: 'postgresql://prod_user:secret@db.projectref.supabase.co:5432/postgres',
     CORS_ORIGIN: 'https://crm.frankedu-global.com',
     INITIAL_ADMIN_EMAIL: 'emmanuel@frankedu-global.com',
     INITIAL_ADMIN_PASSWORD: 'SuperSecureProdPassword2026!',
@@ -21,6 +23,20 @@ describe('Production Environment Secrets Guardrail (Phase 10)', () => {
     expect(parsed.NODE_ENV).toBe('production');
     expect(parsed.JWT_SECRET).toBe(baseValidProdEnv.JWT_SECRET);
     expect(parsed.INITIAL_ADMIN_PASSWORD).toBe(baseValidProdEnv.INITIAL_ADMIN_PASSWORD);
+    expect(parsed.DIRECT_URL).toBe(baseValidProdEnv.DIRECT_URL);
+  });
+
+  it('should reject production configuration when DIRECT_URL is missing', () => {
+    const envWithoutDirectUrl = { ...baseValidProdEnv } as Record<string, unknown>;
+    delete envWithoutDirectUrl['DIRECT_URL'];
+    expect(() => parseEnv(envWithoutDirectUrl)).toThrow(ZodError);
+
+    try {
+      parseEnv(envWithoutDirectUrl);
+    } catch (err) {
+      const issues = (err as ZodError).issues;
+      expect(issues.some((i) => i.path.includes('DIRECT_URL'))).toBe(true);
+    }
   });
 
   it('should reject production configuration when JWT_SECRET uses known development default', () => {

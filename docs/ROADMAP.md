@@ -33,8 +33,9 @@ This document is the **single source of truth** for the project lifecycle. Phase
 | **6** | API Contract & Frontend Handoff | OpenAPI/Swagger spec, Postman collection, Lovable contract | `[COMPLETE]` |
 | **7** | Frontend Implementation | Next.js, Tailwind CSS, TanStack Query, Lovable design | `[COMPLETE]` |
 | **8** | Frontend & Backend Integration | End-to-end local wiring, State synchronization, Real-time updates | `[COMPLETE]` |
-| **9** | External Provider Integrations | Meta Cloud API (WhatsApp/IG) & Resend setup (non-disruptive) | `[COMPLETE]` |
-| **10** | Final Security Audit & E2E Verification | Final audit, vulnerability scan, E2E suite, launch sign-off | `[COMPLETE]` |
+| **9** | External Provider Integrations | Meta Cloud API (WhatsApp/IG) &amp; Resend setup (non-disruptive) | `[COMPLETE]` |
+| **10** | Final Security Audit &amp; E2E Verification | Final audit, vulnerability scan, E2E suite, launch sign-off | `[COMPLETE]` |
+| **11** | Supabase Production Database Readiness | Prisma directUrl, DIRECT_URL env, db:deploy, production seed safety | `[COMPLETE]` |
 
 ---
 
@@ -261,3 +262,56 @@ This document is the **single source of truth** for the project lifecycle. Phase
     - **Automated browser tool limitation**: Browser automation via `browser_subagent` remained unavailable due to the documented environment CDP protocol context limitation (`Browser.setDownloadBehavior: Browser context management is not supported`). Automated browser automation is strictly not claimed to have passed.
 - **Completion Criteria**: Production-ready, fully verified MVP with confirmed security audit, passing E2E test suite, and passing manual browser smoke test.
 - **Dependencies / Blockers**: None (All 10 project phases complete).
+
+---
+
+## Phase 11: Supabase Production Database Readiness `[COMPLETE]`
+
+- **Objective**: Prepare the existing Express + Prisma + PostgreSQL stack for hosted production deployment on Supabase. No application logic changes, no schema redesign, no migration to Supabase Auth or SDK.
+- **Scope &amp; Deliverables**:
+  - **Prisma `directUrl` support** (`backend/prisma/schema.prisma`):
+    - Added `directUrl = env("DIRECT_URL")` to the `datasource db` block (Prisma v6 pattern).
+    - Separates the runtime connection (`DATABASE_URL` — can be Supabase Transaction Mode pooler, port 6543) from the Prisma CLI and interactive-transaction path (`DIRECT_URL` — direct/non-pooled, port 5432).
+    - In local dev, both variables point to the same Docker PostgreSQL instance (no behavior change).
+  - **`DIRECT_URL` environment variable** (`backend/src/config/env.ts`):
+    - Added `DIRECT_URL: z.string().url().optional()` to `envSchema`.
+    - Added production `superRefine` rule: `DIRECT_URL` is required and must be explicitly provided when `NODE_ENV=production`.
+    - Dev/test behavior unchanged — `DIRECT_URL` is optional in non-production environments.
+  - **`db:deploy` script** (`backend/package.json`):
+    - Added `"db:deploy": "prisma migrate deploy"` — the correct production migration command.
+    - Unlike `db:migrate` (`migrate dev`), this command does not require a shadow database, making it compatible with Supabase and any managed PostgreSQL host.
+    - `db:migrate` (local dev only) is retained unchanged.
+  - **`db:admin-seed` script and `prisma/admin-seed.ts`** (new file):
+    - New `prisma/admin-seed.ts`: production-safe admin provisioning script. Upserts only the initial admin user. No demo/sample CRM data is inserted. Validates that `INITIAL_ADMIN_PASSWORD` is set, non-default, and meets minimum length before connecting to the database.
+    - Added `"db:admin-seed": "tsx prisma/admin-seed.ts"` script.
+  - **Production seed guard** (`backend/prisma/seed.ts`):
+    - Added early-exit guard: if `NODE_ENV=production`, `seed.ts` aborts with exit code 1 and a clear message directing operators to `db:admin-seed` instead.
+    - Demo seed data can never reach a production Supabase database via the standard seed pipeline.
+  - **Local `.env` and `.env.example` updated**:
+    - `DIRECT_URL` added to both files pointing to the same local Docker PostgreSQL URL as `DATABASE_URL` (no change to local dev behavior).
+    - Comments explain the dev vs. production distinction clearly.
+- **Prisma/Supabase Connection Decision**:
+  - Prisma version: **6.19.3**.
+  - In Prisma v6, `directUrl` in `schema.prisma` is the correct and fully supported pattern (deprecated only in v7). `prisma.config.ts` is the v7+ path and is not applicable here.
+  - The codebase uses interactive transactions (`prisma.$transaction(async tx =>)`) at 7 call sites. Interactive transactions require a session-capable (non-Transaction Mode pooler) connection. `DIRECT_URL` routes the Prisma CLI and schema operations over the direct PostgreSQL port (5432), ensuring these always work correctly regardless of what `DATABASE_URL` is set to in production.
+  - No driver adapter (`@prisma/adapter-pg`) is required for this traditional Node.js/Express setup.
+- **Validation Gates Passed**:
+  - `prisma validate` — schema valid ✅
+  - `prisma generate` — client regenerated ✅
+  - `prisma migrate status` — 2/2 migrations applied ✅
+  - `npm run db:deploy` — confirmed works against local Docker DB (no pending migrations, no shadow DB required) ✅
+  - `npm run lint` — 0 errors ✅
+  - `npm run typecheck` — 0 TypeScript errors ✅
+  - `npm test` — **187/187 tests pass** (28 test suites) ✅ (+1 test from new DIRECT_URL regression coverage)
+  - Production seed guard: `NODE_ENV=production tsx prisma/seed.ts` exits with code 1 ✅
+  - `admin-seed.ts`: known-default password rejected with exit code 1 ✅
+  - Git diff secrets scan: no real credentials in tracked diff ✅
+- **Remaining Production Deployment Steps** (not in scope for Phase 11):
+  1. Create Supabase project and obtain both connection strings (direct port 5432 and pooled port 6543).
+  2. Set production environment variables: `DATABASE_URL` (pooled), `DIRECT_URL` (direct), `NODE_ENV=production`, `JWT_SECRET`, `INITIAL_ADMIN_PASSWORD`, `CORS_ORIGIN`, and provider keys.
+  3. Run `npm run db:deploy` against Supabase (applies all 2 migrations).
+  4. Run `npm run db:admin-seed` to provision the initial admin account (no sample data).
+  5. Deploy the backend to the chosen hosting platform (Render, Railway, etc.).
+  6. Verify `GET /api/v1/health` and admin login against the live Supabase database.
+- **Completion Criteria**: All codebase readiness changes committed and validated; local dev unaffected; production deployment path fully documented and tested end-to-end against local DB.
+- **Dependencies / Blockers**: Actual Supabase project creation, connection string retrieval, and production hosting setup are external operational steps — not code-level blockers.

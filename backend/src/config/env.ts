@@ -16,6 +16,11 @@ export const envSchema = z
     NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
     PORT: z.coerce.number().int().positive().default(4000),
     DATABASE_URL: z.string().url(),
+    // Used by Prisma CLI (migrate deploy, introspect) and interactive transactions.
+    // In production with a pooled DATABASE_URL (e.g. Supabase Transaction Mode),
+    // this must be the direct/non-pooled connection string.
+    // Optional in development where DATABASE_URL is already a direct connection.
+    DIRECT_URL: z.string().url().optional(),
     CORS_ORIGIN: z.string().default('http://localhost:3000,http://localhost:8080'),
     INITIAL_ADMIN_EMAIL: z.string().email().default('emmanuel@frankedu-global.com'),
     INITIAL_ADMIN_PASSWORD: z.string().min(8).default(KNOWN_DEFAULT_ADMIN_PASSWORDS[0]!),
@@ -65,6 +70,15 @@ export const envSchema = z
           path: ['INITIAL_ADMIN_PASSWORD'],
           message:
             'INITIAL_ADMIN_PASSWORD must be explicitly provided in production and cannot use development default fallback',
+        });
+      }
+
+      if (!data.DIRECT_URL) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['DIRECT_URL'],
+          message:
+            'DIRECT_URL must be explicitly provided in production for Prisma migrations and interactive transactions',
         });
       }
     }

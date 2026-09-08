@@ -4,6 +4,18 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
+// Safety guard: this script seeds SAMPLE/DEMO CRM data and must never run in production.
+// For production admin user provisioning, use: npm run db:admin-seed
+if (process.env['NODE_ENV'] === 'production') {
+  console.error(
+    '❌ ABORTED: prisma/seed.ts contains demo/sample data and must not run in production.',
+  );
+  console.error(
+    '   To provision the initial admin account in production, run: npm run db:admin-seed',
+  );
+  process.exit(1);
+}
+
 const prisma = new PrismaClient();
 
 async function main(): Promise<void> {

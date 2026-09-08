@@ -91,6 +91,9 @@ describe('Prisma Database & Domain Layer Integration', () => {
 
     const duplicateMessageId = 'test_dup_external_001';
 
+    // Pre-test cleanup: remove stale test data from any interrupted previous run
+    await prisma.message.deleteMany({ where: { externalMessageId: duplicateMessageId } });
+
     // Insert first message
     const msg1 = await prisma.message.create({
       data: {

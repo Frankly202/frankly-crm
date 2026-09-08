@@ -17,7 +17,9 @@
     "test:integration": "vitest run tests/integration",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
-    "db:seed": "prisma db seed"
+    "db:deploy": "prisma migrate deploy",
+    "db:seed": "prisma db seed",
+    "db:admin-seed": "tsx prisma/admin-seed.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
