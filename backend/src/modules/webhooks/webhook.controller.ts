@@ -60,7 +60,7 @@ export class WebhookController {
       }
 
       // Normalize inbound payload into common structure
-      const normalizedMessages = adapter.normalizeInboundPayload(req.body);
+      const normalizedMessages = await adapter.normalizeInboundPayload(req.body);
 
       // Ingest each message through the domain pipeline
       const results = [];

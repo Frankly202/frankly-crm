@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import request from 'supertest';
 import { app } from '../../src/app.js';
 import { prisma, connectDatabase, disconnectDatabase } from '../../src/config/database.js';
@@ -23,6 +23,7 @@ describe('Webhooks & Inbound Channel Ingestion Integration', () => {
             'wamid.HBgLMzU3OTk0NDU1NjYVAgASGBQzQTU5NzNGODk4MDhD',
             'm_mid.1458175510252:169d56789',
             'email_rec_01J8K9L0M1N2P3Q4R5S6T7U8V9',
+            'email_rec_metadata_only_001',
             'web_submission_cyprus_2026_001',
             'auto_transition_msg_001',
           ],
@@ -36,6 +37,7 @@ describe('Webhooks & Inbound Channel Ingestion Integration', () => {
           { primaryPhone: '+35799445566' },
           { instagramHandle: '@maria_limassol' },
           { primaryEmail: 'katerina.v@example.com' },
+          { primaryEmail: 'metadata.client@example.com' },
           { primaryEmail: 'alex.christou@example.com' },
           { primaryEmail: 'auto.transition@example.com' },
         ],
@@ -47,26 +49,22 @@ describe('Webhooks & Inbound Channel Ingestion Integration', () => {
 
   describe('Meta Verification Challenge Handshake', () => {
     it('should verify WhatsApp Meta challenge handshake with matching verify token', async () => {
-      const response = await request(app)
-        .get('/api/v1/webhooks/whatsapp')
-        .query({
-          'hub.mode': 'subscribe',
-          'hub.verify_token': 'frankly_test_verify_token',
-          'hub.challenge': 'test_meta_challenge_12345',
-        });
+      const response = await request(app).get('/api/v1/webhooks/whatsapp').query({
+        'hub.mode': 'subscribe',
+        'hub.verify_token': 'frankly_test_verify_token',
+        'hub.challenge': 'test_meta_challenge_12345',
+      });
 
       expect(response.status).toBe(200);
       expect(response.text).toBe('test_meta_challenge_12345');
     });
 
     it('should reject WhatsApp verification if verify token is incorrect', async () => {
-      const response = await request(app)
-        .get('/api/v1/webhooks/whatsapp')
-        .query({
-          'hub.mode': 'subscribe',
-          'hub.verify_token': 'wrong_token',
-          'hub.challenge': 'test_meta_challenge_12345',
-        });
+      const response = await request(app).get('/api/v1/webhooks/whatsapp').query({
+        'hub.mode': 'subscribe',
+        'hub.verify_token': 'wrong_token',
+        'hub.challenge': 'test_meta_challenge_12345',
+      });
 
       expect(response.status).toBe(401);
     });
@@ -183,13 +181,70 @@ describe('Webhooks & Inbound Channel Ingestion Integration', () => {
       expect(message).toBeDefined();
       expect(message?.senderIdentifier).toBe('katerina.v@example.com');
     });
+
+    it('should deduplicate retransmitted Resend email webhooks without creating duplicate records', async () => {
+      const response = await request(app)
+        .post('/api/v1/webhooks/resend')
+        .set('x-local-fixture-test', 'true')
+        .send(resendFixture);
+
+      expect(response.status).toBe(200);
+      expect(response.body.data.messages[0].deduplicated).toBe(true);
+
+      const messageCount = await prisma.message.count({
+        where: { externalMessageId: 'email_rec_01J8K9L0M1N2P3Q4R5S6T7U8V9' },
+      });
+      expect(messageCount).toBe(1);
+    });
+
+    it('should fetch email body from Receiving API and ingest message when webhook is metadata-only', async () => {
+      const metadataOnlyPayload = {
+        type: 'email.received',
+        created_at: '2026-09-08T15:00:00.000Z',
+        data: {
+          email_id: 'email_rec_metadata_only_001',
+          from: 'Metadata Client <metadata.client@example.com>',
+          to: ['emmanuel@frankedu-global.com'],
+          subject: 'Receiving API Integration Test',
+        },
+      };
+
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = vi.fn().mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: 'email_rec_metadata_only_001',
+          text: 'This body was fetched from the Resend Receiving API.',
+          html: '<p>This body was fetched from the Resend Receiving API.</p>',
+          subject: 'Receiving API Integration Test',
+        }),
+      } as unknown as Response);
+
+      try {
+        const response = await request(app)
+          .post('/api/v1/webhooks/resend')
+          .set('x-local-fixture-test', 'true')
+          .send(metadataOnlyPayload);
+
+        expect(response.status).toBe(200);
+        expect(response.body.success).toBe(true);
+
+        const message = await prisma.message.findUnique({
+          where: { externalMessageId: 'email_rec_metadata_only_001' },
+        });
+        expect(message).toBeDefined();
+        expect(message?.body).toBe('This body was fetched from the Resend Receiving API.');
+        expect(message?.senderIdentifier).toBe('metadata.client@example.com');
+      } finally {
+        globalThis.fetch = originalFetch;
+      }
+    });
   });
 
   describe('Website Enquiry Form Inbound Processing', () => {
     it('should ingest website form, map requested category, and create lead', async () => {
-      const response = await request(app)
-        .post('/api/v1/webhooks/website')
-        .send(websiteFixture);
+      const response = await request(app).post('/api/v1/webhooks/website').send(websiteFixture);
 
       expect(response.status).toBe(200);
       expect(response.body.success).toBe(true);

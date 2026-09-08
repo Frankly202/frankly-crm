@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import crypto from 'crypto';
 import { Request } from 'express';
+import { env } from '../../src/config/env.js';
 import { whatsAppAdapter } from '../../src/modules/webhooks/adapters/whatsapp.adapter.js';
 import { instagramAdapter } from '../../src/modules/webhooks/adapters/instagram.adapter.js';
 import { resendEmailAdapter } from '../../src/modules/webhooks/adapters/resend.adapter.js';
@@ -49,7 +50,8 @@ describe('Channel Adapters Unit Tests', () => {
       // Tampered signature should fail
       const tamperedReq = {
         headers: {
-          'x-hub-signature-256': 'sha256=0000000000000000000000000000000000000000000000000000000000000000',
+          'x-hub-signature-256':
+            'sha256=0000000000000000000000000000000000000000000000000000000000000000',
         },
         rawBody,
       } as unknown as Request;
@@ -100,8 +102,8 @@ describe('Channel Adapters Unit Tests', () => {
   });
 
   describe('ResendEmailAdapter', () => {
-    it('should correctly normalize Resend inbound email fixture', () => {
-      const messages = resendEmailAdapter.normalizeInboundPayload(resendFixture);
+    it('should correctly normalize Resend inbound email fixture with embedded text', async () => {
+      const messages = await resendEmailAdapter.normalizeInboundPayload(resendFixture);
       expect(messages.length).toBe(1);
 
       const msg = messages[0];
@@ -111,6 +113,165 @@ describe('Channel Adapters Unit Tests', () => {
       expect(msg?.recipientIdentifier).toBe('emmanuel@frankedu-global.com');
       expect(msg?.body).toContain('medical degree programs in Cyprus');
       expect(msg?.externalMessageId).toBe('email_rec_01J8K9L0M1N2P3Q4R5S6T7U8V9');
+    });
+
+    it('should fetch full plain text body from Resend Receiving API when webhook payload is metadata-only', async () => {
+      const metadataOnlyPayload = {
+        type: 'email.received',
+        created_at: '2026-09-08T14:00:00.000Z',
+        data: {
+          email_id: '56761188-7520-42d8-8898-ff6fc54ce618',
+          from: 'Andreas Papantoniou <andreas@example.com>',
+          to: ['emmanuel@inbound.frankedu-global.com'],
+          subject: 'Limassol property inquiry',
+        },
+      };
+
+      const originalKey = env.RESEND_API_KEY;
+      env.RESEND_API_KEY = 're_test_dummy_key_123';
+      vi.stubEnv('RESEND_API_KEY', 're_test_dummy_key_123');
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: '56761188-7520-42d8-8898-ff6fc54ce618',
+          text: 'Hello, I would like more information on 2-bed apartments in Germasogeia.',
+          html: '<p>Hello, I would like more information on 2-bed apartments in Germasogeia.</p>',
+          subject: 'Limassol property inquiry',
+        }),
+      } as unknown as Response);
+
+      const messages = await resendEmailAdapter.normalizeInboundPayload(metadataOnlyPayload);
+      expect(messages.length).toBe(1);
+
+      const msg = messages[0];
+      expect(msg?.senderIdentifier).toBe('andreas@example.com');
+      expect(msg?.senderName).toBe('Andreas Papantoniou');
+      expect(msg?.body).toBe(
+        'Hello, I would like more information on 2-bed apartments in Germasogeia.',
+      );
+      expect(fetchSpy).toHaveBeenCalledWith(
+        'https://api.resend.com/emails/receiving/56761188-7520-42d8-8898-ff6fc54ce618',
+        expect.objectContaining({
+          method: 'GET',
+          headers: expect.objectContaining({
+            Authorization: 'Bearer re_test_dummy_key_123',
+          }),
+        }),
+      );
+
+      fetchSpy.mockRestore();
+      env.RESEND_API_KEY = originalKey;
+      vi.unstubAllEnvs();
+    });
+
+    it('should strip HTML and use it when Receiving API returns html with empty text', async () => {
+      const metadataOnlyPayload = {
+        type: 'email.received',
+        data: {
+          email_id: 'email_html_only_123',
+          from: 'Elena <elena@example.com>',
+          to: ['emmanuel@frankedu-global.com'],
+          subject: 'HTML Only inquiry',
+        },
+      };
+
+      vi.stubEnv('RESEND_API_KEY', 're_test_dummy_key_123');
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: 'email_html_only_123',
+          text: null,
+          html: '<div><h1>Partnership Proposal</h1><p>Please review our <b>MOU</b> terms.</p></div>',
+          subject: 'HTML Only inquiry',
+        }),
+      } as unknown as Response);
+
+      const messages = await resendEmailAdapter.normalizeInboundPayload(metadataOnlyPayload);
+      expect(messages.length).toBe(1);
+      expect(messages[0]?.body).toBe('Partnership Proposal Please review our MOU terms.');
+
+      fetchSpy.mockRestore();
+      vi.unstubAllEnvs();
+    });
+
+    it('should safely fall back to subject line when Receiving API returns non-200 status', async () => {
+      const metadataOnlyPayload = {
+        type: 'email.received',
+        data: {
+          email_id: 'email_404_id',
+          from: 'Client <client@example.com>',
+          to: ['emmanuel@frankedu-global.com'],
+          subject: 'Urgent consultation request',
+        },
+      };
+
+      vi.stubEnv('RESEND_API_KEY', 're_test_dummy_key_123');
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+      } as unknown as Response);
+
+      const messages = await resendEmailAdapter.normalizeInboundPayload(metadataOnlyPayload);
+      expect(messages.length).toBe(1);
+      expect(messages[0]?.body).toBe('[Subject: Urgent consultation request]');
+
+      fetchSpy.mockRestore();
+      vi.unstubAllEnvs();
+    });
+
+    it('should safely fall back to subject line when Receiving API times out or throws a network error', async () => {
+      const metadataOnlyPayload = {
+        type: 'email.received',
+        data: {
+          email_id: 'email_timeout_id',
+          from: 'Client <client@example.com>',
+          to: ['emmanuel@frankedu-global.com'],
+          subject: 'Network failure fallback test',
+        },
+      };
+
+      vi.stubEnv('RESEND_API_KEY', 're_test_dummy_key_123');
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockRejectedValueOnce(new Error('The operation was aborted due to timeout'));
+
+      const messages = await resendEmailAdapter.normalizeInboundPayload(metadataOnlyPayload);
+      expect(messages.length).toBe(1);
+      expect(messages[0]?.body).toBe('[Subject: Network failure fallback test]');
+
+      fetchSpy.mockRestore();
+      vi.unstubAllEnvs();
+    });
+
+    it('should safely fall back to subject line when Receiving API returns invalid/unparseable schema', async () => {
+      const metadataOnlyPayload = {
+        type: 'email.received',
+        data: {
+          email_id: 'email_invalid_schema_id',
+          from: 'Client <client@example.com>',
+          to: ['emmanuel@frankedu-global.com'],
+          subject: 'Malformed schema test',
+        },
+      };
+
+      vi.stubEnv('RESEND_API_KEY', 're_test_dummy_key_123');
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          text: 12345, // Invalid: should be string
+          html: ['not a string'], // Invalid
+        }),
+      } as unknown as Response);
+
+      const messages = await resendEmailAdapter.normalizeInboundPayload(metadataOnlyPayload);
+      expect(messages.length).toBe(1);
+      expect(messages[0]?.body).toBe('[Subject: Malformed schema test]');
+
+      fetchSpy.mockRestore();
+      vi.unstubAllEnvs();
     });
   });
 

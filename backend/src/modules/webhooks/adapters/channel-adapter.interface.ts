@@ -31,6 +31,8 @@ export interface OutboundDeliveryResult {
 export interface ChannelAdapter {
   readonly channel: ChannelType;
   verifyWebhookSignature(req: Request): boolean;
-  normalizeInboundPayload(payload: unknown): NormalizedInboundMessage[];
+  normalizeInboundPayload(
+    payload: unknown,
+  ): NormalizedInboundMessage[] | Promise<NormalizedInboundMessage[]>;
   sendOutboundMessage(params: OutboundMessageParams): Promise<OutboundDeliveryResult>;
 }

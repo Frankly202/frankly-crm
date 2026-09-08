@@ -12,6 +12,16 @@ import { env } from '../../../config/env.js';
 import { BadGatewayError } from '../../../common/errors/app-error.js';
 import { logger } from '../../../common/utils/logger.js';
 
+import { z } from 'zod';
+
+const resendReceivingEmailSchema = z.object({
+  id: z.string().optional(),
+  text: z.string().nullable().optional(),
+  html: z.string().nullable().optional(),
+  subject: z.string().nullable().optional(),
+  headers: z.record(z.unknown()).optional(),
+});
+
 interface ResendEmailPayload {
   type?: string;
   created_at?: string;
@@ -29,7 +39,16 @@ export class ResendEmailAdapter implements ChannelAdapter {
   readonly channel = ChannelType.RESEND_EMAIL;
 
   verifyWebhookSignature(req: Request): boolean {
-    const secret = process.env['RESEND_WEBHOOK_SECRET'] || env.RESEND_WEBHOOK_SECRET;
+    // In local non-production development/testing, explicitly allow designated fixture test requests
+    if (
+      env.NODE_ENV !== 'production' &&
+      env.PROVIDER_MODE !== 'live' &&
+      req.headers['x-local-fixture-test'] === 'true'
+    ) {
+      return true;
+    }
+
+    const secret = env.RESEND_WEBHOOK_SECRET || process.env['RESEND_WEBHOOK_SECRET'];
 
     if (secret) {
       const svixId = req.headers['svix-id'] as string | undefined;
@@ -96,7 +115,63 @@ export class ResendEmailAdapter implements ChannelAdapter {
     return req.headers['x-local-fixture-test'] === 'true';
   }
 
-  normalizeInboundPayload(payload: unknown): NormalizedInboundMessage[] {
+  /**
+   * Fetch full email content from Resend Receiving API (GET /emails/receiving/:email_id).
+   * Safe, bounded timeout (8s), sanitized logging (no keys or headers logged).
+   */
+  async fetchReceivedEmailContent(
+    emailId: string,
+  ): Promise<{ text?: string | null; html?: string | null } | null> {
+    const apiKey = env.RESEND_API_KEY?.trim() || process.env['RESEND_API_KEY']?.trim();
+    if (!apiKey) {
+      return null;
+    }
+
+    const url = `https://api.resend.com/emails/receiving/${encodeURIComponent(emailId)}`;
+
+    try {
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          Accept: 'application/json',
+        },
+        signal: AbortSignal.timeout(8000),
+      });
+
+      if (!response.ok) {
+        logger.warn(`Resend Receiving API returned non-200 status for email: ${response.status}`, {
+          emailId,
+          status: response.status,
+        });
+        return null;
+      }
+
+      const rawJson = await response.json();
+      const parseResult = resendReceivingEmailSchema.safeParse(rawJson);
+      if (!parseResult.success) {
+        logger.warn('Resend Receiving API response validation failed', {
+          emailId,
+          issues: parseResult.error.issues.map((i) => i.message),
+        });
+        return null;
+      }
+
+      return {
+        text: parseResult.data.text ?? null,
+        html: parseResult.data.html ?? null,
+      };
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : String(err);
+      logger.warn('Failed to fetch email content from Resend Receiving API', {
+        emailId,
+        error: errorMsg,
+      });
+      return null;
+    }
+  }
+
+  async normalizeInboundPayload(payload: unknown): Promise<NormalizedInboundMessage[]> {
     const data = payload as ResendEmailPayload;
     if (!data.data || !data.data.email_id || !data.data.from) {
       return [];
@@ -115,10 +190,24 @@ export class ResendEmailAdapter implements ChannelAdapter {
         ? normalizeEmail(data.data.to[0] || '')
         : 'emmanuel@frankedu-global.com';
 
-    let body = data.data.text || '';
-    if (!body && data.data.html) {
+    let body = data.data.text?.trim() || '';
+    let html = data.data.html?.trim() || '';
+
+    // When body is missing from webhook metadata, fetch full content from Resend Receiving API
+    if (!body && !html && data.data.email_id) {
+      const remoteContent = await this.fetchReceivedEmailContent(data.data.email_id);
+      if (remoteContent) {
+        if (remoteContent.text?.trim()) {
+          body = remoteContent.text.trim();
+        } else if (remoteContent.html?.trim()) {
+          html = remoteContent.html.trim();
+        }
+      }
+    }
+
+    if (!body && html) {
       // Strip HTML tags for clean text view
-      body = data.data.html
+      body = html
         .replace(/<[^>]+>/g, ' ')
         .replace(/\s+/g, ' ')
         .trim();
