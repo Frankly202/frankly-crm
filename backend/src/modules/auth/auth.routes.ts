@@ -3,7 +3,10 @@ import { authController } from './auth.controller.js';
 import { validate } from '../../common/middlewares/validate.middleware.js';
 import { authenticate } from '../../common/middlewares/auth.middleware.js';
 import { requireRole } from '../../common/middlewares/role.middleware.js';
-import { authRateLimiter } from '../../common/middlewares/rate-limiter.middleware.js';
+import {
+  authRateLimiter,
+  refreshRateLimiter,
+} from '../../common/middlewares/rate-limiter.middleware.js';
 import { Role } from '@prisma/client';
 import {
   loginSchema,
@@ -27,8 +30,11 @@ router.post(
   (req, res, next) => authController.register(req, res, next),
 );
 
-router.post('/refresh', validate({ body: refreshTokenSchema }), (req, res, next) =>
-  authController.refresh(req, res, next),
+router.post(
+  '/refresh',
+  refreshRateLimiter,
+  validate({ body: refreshTokenSchema }),
+  (req, res, next) => authController.refresh(req, res, next),
 );
 
 router.post('/logout', validate({ body: logoutSchema }), (req, res, next) =>

@@ -62,11 +62,12 @@ export class ConversationService {
     }
 
     if (query.unreadOnly) {
-      // Unread means lastReadAt is null or lastReadAt < lastMessageAt
-      where.OR = [
-        { lastReadAt: null },
-        // Prisma comparison between two columns requires raw or filtering post-query
-      ];
+      // Unread means never read (lastReadAt is null) OR new message arrived after last read
+      const unreadRecords = await prisma.$queryRaw<Array<{ id: string }>>`
+        SELECT id FROM "conversations"
+        WHERE "lastReadAt" IS NULL OR "lastMessageAt" > "lastReadAt"
+      `;
+      where.id = { in: unreadRecords.map((r) => r.id) };
     }
 
     const [total, rawConversations] = await Promise.all([

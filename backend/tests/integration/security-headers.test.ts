@@ -31,4 +31,24 @@ describe('Security Headers and CORS', () => {
     expect(response.headers['access-control-allow-origin']).toBe('http://localhost:8080');
     expect(response.headers['access-control-allow-credentials']).toBe('true');
   });
+
+  it('should omit CORS allow headers for disallowed origin without returning 500 error', async () => {
+    const response = await request(app)
+      .get('/api/v1/health')
+      .set('Origin', 'https://unauthorized-attacker.example.com');
+
+    // The request completes normally without an application-level 500
+    expect(response.status).toBe(200);
+    expect(response.headers['access-control-allow-origin']).toBeUndefined();
+  });
+
+  it('should omit CORS allow headers on preflight for disallowed origin without returning 500 error', async () => {
+    const response = await request(app)
+      .options('/api/v1/health')
+      .set('Origin', 'https://unauthorized-attacker.example.com')
+      .set('Access-Control-Request-Method', 'GET');
+
+    expect(response.status).not.toBe(500);
+    expect(response.headers['access-control-allow-origin']).toBeUndefined();
+  });
 });

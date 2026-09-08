@@ -212,6 +212,15 @@ describe('Authentication API Integration', () => {
 
       expect(refreshRes.status).toBe(401);
     });
+
+    it('should have rate limiting active with standard headers on POST /api/v1/auth/refresh', async () => {
+      const res = await request(app)
+        .post('/api/v1/auth/refresh')
+        .send({ refreshToken: 'non_existent_token_string' });
+
+      expect(res.headers['ratelimit-limit']).toBeDefined();
+      expect(res.headers['ratelimit-remaining']).toBeDefined();
+    });
   });
 
   describe('POST /api/v1/auth/register (ADMIN Guarded)', () => {

@@ -114,6 +114,69 @@ describe('Conversations API Integration', () => {
         expect(conv.channel).toBe(ChannelType.WHATSAPP);
       }
     });
+
+    it('should accurately filter unread conversations across never-read, read-with-new-message, and read-with-no-new-message states', async () => {
+      const now = new Date();
+      const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+      const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);
+
+      // 1. Never read conversation
+      const neverReadConv = await prisma.conversation.create({
+        data: {
+          contactId: testContactId,
+          channel: ChannelType.WHATSAPP,
+          channelThreadId: '+35799110001',
+          lastMessageAt: now,
+          lastReadAt: null,
+        },
+      });
+
+      // 2. Previously read conversation, but customer sent a new message afterwards
+      const readWithNewMessageConv = await prisma.conversation.create({
+        data: {
+          contactId: testContactId,
+          channel: ChannelType.WHATSAPP,
+          channelThreadId: '+35799110002',
+          lastReadAt: oneHourAgo,
+          lastMessageAt: now, // new message after lastReadAt
+        },
+      });
+
+      // 3. Previously read conversation with no subsequent messages
+      const readNoNewMessageConv = await prisma.conversation.create({
+        data: {
+          contactId: testContactId,
+          channel: ChannelType.WHATSAPP,
+          channelThreadId: '+35799110003',
+          lastMessageAt: twoHoursAgo,
+          lastReadAt: now, // read is newer than last message
+        },
+      });
+
+      try {
+        const response = await request(app)
+          .get('/api/v1/conversations?unreadOnly=true')
+          .set('Authorization', `Bearer ${adminToken}`);
+
+        expect(response.status).toBe(200);
+        expect(response.body.success).toBe(true);
+
+        const returnedIds = response.body.data.map((c: { id: string }) => c.id);
+
+        // never-read MUST be included
+        expect(returnedIds).toContain(neverReadConv.id);
+        // read-with-new-message MUST be included
+        expect(returnedIds).toContain(readWithNewMessageConv.id);
+        // read-with-no-new-message MUST be excluded
+        expect(returnedIds).not.toContain(readNoNewMessageConv.id);
+      } finally {
+        await prisma.conversation.deleteMany({
+          where: {
+            id: { in: [neverReadConv.id, readWithNewMessageConv.id, readNoNewMessageConv.id] },
+          },
+        });
+      }
+    });
   });
 
   describe('GET /api/v1/conversations/:id', () => {

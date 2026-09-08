@@ -29,3 +29,17 @@ export const websiteFormRateLimiter = rateLimit({
   },
 });
 
+export const refreshRateLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: env.NODE_ENV === 'test' ? 10000 : 60, // 60 refresh attempts per 15 min (balanced for multi-tab sessions)
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    error: {
+      code: 'TOO_MANY_REQUESTS',
+      message: 'Too many token refresh attempts. Please try again later.',
+    },
+  },
+});
+
