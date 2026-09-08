@@ -1,0 +1,25 @@
+{
+  "object": "instagram",
+  "entry": [
+    {
+      "id": "17841400000000001",
+      "time": 1725717600000,
+      "messaging": [
+        {
+          "sender": {
+            "id": "ig_user_998877",
+            "username": "maria_limassol"
+          },
+          "recipient": {
+            "id": "17841400000000001"
+          },
+          "timestamp": 1725717600000,
+          "message": {
+            "mid": "m_mid.1458175510252:169d56789",
+            "text": "Hello! Could you share information regarding property investments in Paphos?"
+          }
+        }
+      ]
+    }
+  ]
+}

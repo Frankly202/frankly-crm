@@ -1,0 +1,22 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: frankly-crm-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: frankly_user
+      POSTGRES_PASSWORD: frankly_pass
+      POSTGRES_DB: frankly_crm
+    ports:
+      - "5435:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U frankly_user -d frankly_crm"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+    driver: local

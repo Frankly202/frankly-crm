@@ -1,0 +1,2311 @@
+openapi: 3.0.3
+info:
+  title: FranklyEdu Global CRM MVP API
+  version: 0.1.0
+  description: >
+    Backend REST API specification for FranklyEdu Global Internal CRM MVP.
+    Provides unified lead management, contact resolution, activity tracking,
+    dashboard metrics, multi-channel conversations (WhatsApp, Instagram, Email,
+    Website), and inbound webhook adapters.
+servers:
+  - url: http://localhost:4000/api/v1
+    description: Local development server
+  - url: /api/v1
+    description: Relative API root path
+
+security:
+  - BearerAuth: []
+
+paths:
+  /health:
+    get:
+      tags:
+        - System
+      summary: Health check
+      description: Returns operational status, uptime, and runtime environment.
+      security: []
+      responses:
+        '200':
+          description: Service is healthy and operational
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                success: true
+                data:
+                  status: ok
+                  timestamp: '2026-09-07T14:30:00.000Z'
+                  uptimeSeconds: 3600
+                  environment: development
+
+  /auth/login:
+    post:
+      tags:
+        - Authentication
+      summary: User login
+      description: Authenticates user credentials and issues JWT access token with stateful refresh token.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginInput'
+            example:
+              email: emmanuel@frankedu-global.com
+              password: <ADMIN_PASSWORD>
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthSessionResponse'
+              example:
+                success: true
+                data:
+                  user:
+                    id: 3c9b1d8e-7e2a-4b9f-8c1d-0e1f2a3b4c5d
+                    email: emmanuel@frankedu-global.com
+                    name: Frankly Emmanuel
+                    role: ADMIN
+                  accessToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+                  refreshToken: 5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1f0e9d8c7b6a5f4e
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /auth/register:
+    post:
+      tags:
+        - Authentication
+      summary: Create internal user (ADMIN only)
+      description: Creates a new user with AGENT or ADMIN role. Restricted to authenticated ADMIN users.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterInput'
+            example:
+              email: agent@frankedu-global.com
+              password: SecurePassword123!
+              name: Sarah Jenkins
+              role: AGENT
+      responses:
+        '201':
+          description: User created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponseEnvelope'
+              example:
+                success: true
+                data:
+                  id: 7b2c3d4e-5f6a-7b8c-9d0e-1f2a3b4c5d6e
+                  email: agent@frankedu-global.com
+                  name: Sarah Jenkins
+                  role: AGENT
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '403':
+          $ref: '#/components/responses/ForbiddenError'
+        '409':
+          $ref: '#/components/responses/ConflictError'
+
+  /auth/refresh:
+    post:
+      tags:
+        - Authentication
+      summary: Refresh access token
+      description: Rotates the provided refresh token and returns a new access/refresh token pair. Concurrency-safe and detects reuse attempts.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshTokenInput'
+            example:
+              refreshToken: 5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1f0e9d8c7b6a5f4e
+      responses:
+        '200':
+          description: Token pair rotated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenRefreshResponse'
+              example:
+                success: true
+                data:
+                  accessToken: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+                  refreshToken: a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /auth/logout:
+    post:
+      tags:
+        - Authentication
+      summary: User logout
+      description: Revokes the specified refresh token.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LogoutInput'
+            example:
+              refreshToken: 5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1f0e9d8c7b6a5f4e
+      responses:
+        '200':
+          description: Logged out successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+              example:
+                success: true
+                data:
+                  message: Logged out successfully
+        '400':
+          $ref: '#/components/responses/ValidationError'
+
+  /auth/me:
+    get:
+      tags:
+        - Authentication
+      summary: Get current authenticated user
+      description: Retrieves the profile of the user associated with the Bearer access token.
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: User profile retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponseEnvelope'
+              example:
+                success: true
+                data:
+                  id: 3c9b1d8e-7e2a-4b9f-8c1d-0e1f2a3b4c5d
+                  email: emmanuel@frankedu-global.com
+                  name: Frankly Emmanuel
+                  role: ADMIN
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /contacts:
+    get:
+      tags:
+        - Contacts
+      summary: List contacts
+      description: Returns a paginated list of contacts sorted by newest first, optionally filtered by search text.
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: integer
+            default: 1
+            minimum: 1
+          description: Page number
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 100
+          description: Items per page
+        - in: query
+          name: search
+          schema:
+            type: string
+          description: Search term matching name, email, phone, or Instagram handle
+      responses:
+        '200':
+          description: Paginated contact list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedContactsResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+    post:
+      tags:
+        - Contacts
+      summary: Create contact
+      description: Creates a new contact record. At least one contact identifier (email, phone, or Instagram handle) is required. Identifiers must be unique across contacts.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateContactInput'
+            example:
+              name: Alex Michaelides
+              primaryEmail: alex@example.com
+              primaryPhone: '+35799123456'
+              instagramHandle: alex_cyprus
+              metadata:
+                country: Cyprus
+                city: Limassol
+      responses:
+        '201':
+          description: Contact created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContactResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '409':
+          $ref: '#/components/responses/ConflictError'
+
+  /contacts/{id}:
+    get:
+      tags:
+        - Contacts
+      summary: Get contact by ID
+      description: Retrieves contact details including associated leads and conversation histories.
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Contact UUID
+      responses:
+        '200':
+          description: Contact details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContactDetailResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+    patch:
+      tags:
+        - Contacts
+      summary: Update contact
+      description: Updates contact profile details and identifiers with unique collision checks.
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Contact UUID
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateContactInput'
+            example:
+              name: Alex Michaelides Updated
+              primaryPhone: '+35799988776'
+      responses:
+        '200':
+          description: Contact updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContactResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+        '409':
+          $ref: '#/components/responses/ConflictError'
+
+  /leads/dashboard/metrics:
+    get:
+      tags:
+        - Dashboard Metrics
+      summary: Get lead dashboard metrics
+      description: Returns aggregated real-time metrics computed from CRM data (totals, counts by status, counts by category, pending next actions breakdown, and activity velocity).
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Real-time dashboard metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardMetricsResponse'
+              example:
+                success: true
+                data:
+                  totals:
+                    totalLeads: 42
+                    totalContacts: 38
+                  byStatus:
+                    NEW: 10
+                    CONTACTED: 8
+                    REPLIED: 7
+                    QUALIFIED: 11
+                    LOST: 4
+                    CLOSED_WON: 2
+                  byCategory:
+                    PROPERTY_BUYER_INVESTOR: 15
+                    PROPERTY_SELLER_AGENT: 6
+                    STUDY_ABROAD_STUDENT: 12
+                    UNIVERSITY_EDUCATION_PARTNER: 5
+                    OTHER_BUSINESS: 4
+                  nextActions:
+                    totalPending: 14
+                    overdue: 3
+                    dueToday: 2
+                    upcoming: 6
+                    noDueDate: 3
+                  recentActivity:
+                    leadsCreatedToday: 4
+                    leadsCreatedThisWeek: 18
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /leads:
+    get:
+      tags:
+        - Leads
+      summary: List leads
+      description: Returns a paginated list of leads sorted by most recently updated, supporting multi-criteria filtering and keyword search.
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: integer
+            default: 1
+            minimum: 1
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 100
+        - in: query
+          name: category
+          schema:
+            $ref: '#/components/schemas/LeadCategory'
+          description: Filter by business category
+        - in: query
+          name: status
+          schema:
+            $ref: '#/components/schemas/LeadStatus'
+          description: Filter by lead lifecycle status
+        - in: query
+          name: assignedToUserId
+          schema:
+            type: string
+          description: Filter by assigned user UUID
+        - in: query
+          name: sourceChannel
+          schema:
+            $ref: '#/components/schemas/ChannelType'
+          description: Filter by origin channel
+        - in: query
+          name: search
+          schema:
+            type: string
+          description: Text search across lead title, notes, next action, contact name, and contact email
+        - in: query
+          name: hasPendingNextAction
+          schema:
+            type: string
+            enum: ['true', 'false']
+          description: Filter by presence of pending next action
+      responses:
+        '200':
+          description: Paginated lead list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedLeadsResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+    post:
+      tags:
+        - Leads
+      summary: Create lead
+      description: Creates a new lead attached to an existing contact. Automatically logs a LEAD_CREATED activity record.
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateLeadInput'
+            example:
+              title: Limassol Seafront Villa Enquiry
+              category: PROPERTY_BUYER_INVESTOR
+              contactId: 4a5b6c7d-8e9f-0a1b-2c3d-4e5f6a7b8c9d
+              sourceChannel: WEBSITE_FORM
+              notes: Interested in luxury villas with sea views, budget €1.5M.
+              nextActionRequired: Call client to schedule viewing
+              nextActionDueDate: '2026-09-10T10:00:00.000Z'
+      responses:
+        '201':
+          description: Lead created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LeadResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /leads/{id}:
+    get:
+      tags:
+        - Leads
+      summary: Get lead by ID
+      description: Retrieves complete lead details including contact, assigned user, linked conversations, and chronological activity logs.
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Detailed lead record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LeadDetailResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+    patch:
+      tags:
+        - Leads
+      summary: Update lead
+      description: Updates lead metadata, business category, assigned user, or next action details.
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateLeadInput'
+            example:
+              title: Limassol Seafront Villa - Negotiating
+              nextActionRequired: Send updated floor plans
+              nextActionDueDate: '2026-09-12T14:00:00.000Z'
+      responses:
+        '200':
+          description: Lead updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LeadResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /leads/{id}/status:
+    patch:
+      tags:
+        - Leads
+      summary: Update lead lifecycle status
+      description: Transitions lead status (NEW, CONTACTED, REPLIED, QUALIFIED, LOST, CLOSED_WON) and automatically records a STATUS_CHANGED activity log with previous and new status.
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateLeadStatusInput'
+            example:
+              status: QUALIFIED
+              note: Client verified proof of funds and selected three properties for viewing.
+      responses:
+        '200':
+          description: Lead status transitioned successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LeadResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /leads/{id}/assign:
+    patch:
+      tags:
+        - Leads
+      summary: Assign lead to agent or admin
+      description: Assigns lead to an active user (or null to unassign). Automatically records a LEAD_ASSIGNED activity log.
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssignLeadInput'
+            example:
+              assignedToUserId: 3c9b1d8e-7e2a-4b9f-8c1d-0e1f2a3b4c5d
+      responses:
+        '200':
+          description: Lead assigned successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LeadResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /leads/{id}/activities:
+    get:
+      tags:
+        - Leads
+      summary: Get lead activities
+      description: Returns the chronological activity history for a lead (creations, status changes, assignments, messages, and custom notes).
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Activity list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivityListResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+    post:
+      tags:
+        - Leads
+      summary: Add activity note to lead
+      description: Adds a custom note or logged activity event to a lead.
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateActivityInput'
+            example:
+              type: NOTE_ADDED
+              description: Conducted initial discovery call with Alex. Confirmed financing pre-approval.
+              metadata:
+                callDurationMinutes: 15
+      responses:
+        '201':
+          description: Activity logged successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActivityResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /conversations:
+    get:
+      tags:
+        - Conversations (Unified Inbox)
+      summary: List unified inbox conversations
+      description: Returns conversations sorted by most recent message activity. Includes latest message preview and dynamically computed isUnread state.
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: integer
+            default: 1
+            minimum: 1
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 100
+        - in: query
+          name: channel
+          schema:
+            $ref: '#/components/schemas/ChannelType'
+          description: Filter by communication channel
+        - in: query
+          name: contactId
+          schema:
+            type: string
+            format: uuid
+          description: Filter by contact UUID
+        - in: query
+          name: leadId
+          schema:
+            type: string
+            format: uuid
+          description: Filter by lead UUID
+        - in: query
+          name: unreadOnly
+          schema:
+            type: string
+            enum: ['true', 'false']
+          description: Filter for unread conversations only
+        - in: query
+          name: search
+          schema:
+            type: string
+          description: Search by sender name, contact info, thread ID, or message text
+      responses:
+        '200':
+          description: Paginated conversation list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedConversationsResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /conversations/{id}:
+    get:
+      tags:
+        - Conversations (Unified Inbox)
+      summary: Get conversation details and timeline
+      description: Retrieves a conversation with linked contact, associated lead, chronological message history, and computed isUnread status.
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Conversation timeline
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationDetailResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /conversations/{id}/messages:
+    post:
+      tags:
+        - Conversations (Unified Inbox)
+      summary: Send outbound message reply
+      description: Dispatches an outbound reply message to the contact through the conversation's channel adapter simulator, records the message, updates conversation lastMessageAt and lastReadAt, and logs a MESSAGE_SENT activity.
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendOutboundMessageInput'
+            example:
+              body: Hello Alex, thank you for reaching out. We have received your inquiry and will send the requested details shortly!
+      responses:
+        '200':
+          description: Outbound message sent and recorded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageRecordResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /conversations/{id}/read:
+    patch:
+      tags:
+        - Conversations (Unified Inbox)
+      summary: Mark conversation as read
+      description: Updates the conversation's lastReadAt timestamp to current time, resetting isUnread to false.
+      security:
+        - BearerAuth: []
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Conversation marked as read
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MarkReadResponse'
+              example:
+                success: true
+                data:
+                  id: 1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d
+                  lastReadAt: '2026-09-07T14:35:00.000Z'
+                  isUnread: false
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+        '404':
+          $ref: '#/components/responses/NotFoundError'
+
+  /webhooks/whatsapp:
+    get:
+      tags:
+        - Webhooks & Inbound Channels
+      summary: Meta WhatsApp verification challenge
+      description: Responds to Meta Cloud API webhook verification handshake (`hub.challenge`).
+      security: []
+      parameters:
+        - in: query
+          name: hub.mode
+          required: true
+          schema:
+            type: string
+          example: subscribe
+        - in: query
+          name: hub.verify_token
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: hub.challenge
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Challenge accepted, returns challenge string in plain text
+          content:
+            text/plain:
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+    post:
+      tags:
+        - Webhooks & Inbound Channels
+      summary: Meta WhatsApp inbound webhook
+      description: "Ingests WhatsApp messages from Meta Cloud API. Verifies X-Hub-Signature-256 HMAC-SHA256 signature (fail-closed) or permits test fixtures via x-local-fixture-test in non-production. Deduplicates messages, links/creates contact and lead, and updates conversation thread."
+      security: []
+      parameters:
+        - in: header
+          name: X-Hub-Signature-256
+          schema:
+            type: string
+          description: SHA256 HMAC signature of raw request body
+        - in: header
+          name: x-local-fixture-test
+          schema:
+            type: string
+          description: Optional test flag for local testing (non-production only)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Webhook processed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookProcessingResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /webhooks/instagram:
+    get:
+      tags:
+        - Webhooks & Inbound Channels
+      summary: Meta Instagram verification challenge
+      description: Responds to Meta Graph API webhook verification handshake (`hub.challenge`).
+      security: []
+      parameters:
+        - in: query
+          name: hub.mode
+          required: true
+          schema:
+            type: string
+          example: subscribe
+        - in: query
+          name: hub.verify_token
+          required: true
+          schema:
+            type: string
+        - in: query
+          name: hub.challenge
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Challenge accepted, returns challenge string in plain text
+          content:
+            text/plain:
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/BadRequestError'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+    post:
+      tags:
+        - Webhooks & Inbound Channels
+      summary: Meta Instagram inbound webhook
+      description: "Ingests Instagram DMs from Meta Graph API. Verifies X-Hub-Signature-256 HMAC-SHA256 signature (fail-closed) or permits test fixtures via x-local-fixture-test in non-production."
+      security: []
+      parameters:
+        - in: header
+          name: X-Hub-Signature-256
+          schema:
+            type: string
+        - in: header
+          name: x-local-fixture-test
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Webhook processed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookProcessingResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /webhooks/resend:
+    post:
+      tags:
+        - Webhooks & Inbound Channels
+      summary: Resend inbound email webhook
+      description: "Ingests inbound emails from Resend. Verifies Svix signatures (svix-id, svix-timestamp, svix-signature) or permits test fixtures via x-local-fixture-test in non-production."
+      security: []
+      parameters:
+        - in: header
+          name: svix-id
+          schema:
+            type: string
+        - in: header
+          name: svix-timestamp
+          schema:
+            type: string
+        - in: header
+          name: svix-signature
+          schema:
+            type: string
+        - in: header
+          name: x-local-fixture-test
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Webhook processed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookProcessingResponse'
+        '401':
+          $ref: '#/components/responses/UnauthorizedError'
+
+  /webhooks/website:
+    post:
+      tags:
+        - Webhooks & Inbound Channels
+      summary: Public website enquiry form
+      description: Public, CORS-enabled endpoint for website enquiry submissions. Protected by IP rate limiting and a honeypot bot trap (`_hp_company`). If honeypot is filled, payload is silently discarded.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WebsiteFormPayload'
+            example:
+              name: Elena Constantinou
+              email: elena@example.com
+              phone: '+35799778899'
+              category: PROPERTY_BUYER_INVESTOR
+              message: Looking for a 3-bedroom villa in Paphos near the sea.
+              submissionId: web_sub_998877
+              _hp_company: ''
+      responses:
+        '200':
+          description: Submission received and processed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookProcessingResponse'
+        '429':
+          description: Too many submissions from this IP address
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Enter the JWT access token returned from /auth/login or /auth/refresh.
+
+  schemas:
+    Role:
+      type: string
+      enum:
+        - ADMIN
+        - AGENT
+      description: User role within Frankly CRM
+
+    LeadCategory:
+      type: string
+      enum:
+        - PROPERTY_BUYER_INVESTOR
+        - PROPERTY_SELLER_AGENT
+        - STUDY_ABROAD_STUDENT
+        - UNIVERSITY_EDUCATION_PARTNER
+        - OTHER_BUSINESS
+      description: Frankly's 5 business categories
+
+    LeadStatus:
+      type: string
+      enum:
+        - NEW
+        - CONTACTED
+        - REPLIED
+        - QUALIFIED
+        - LOST
+        - CLOSED_WON
+      description: Lead lifecycle state
+
+    ChannelType:
+      type: string
+      enum:
+        - WHATSAPP
+        - INSTAGRAM
+        - RESEND_EMAIL
+        - WEBSITE_FORM
+      description: Communication and ingestion channels
+
+    ActivityType:
+      type: string
+      enum:
+        - LEAD_CREATED
+        - STATUS_CHANGED
+        - NOTE_ADDED
+        - NEXT_ACTION_SET
+        - MESSAGE_SENT
+        - MESSAGE_RECEIVED
+        - LEAD_ASSIGNED
+      description: Types of logged timeline activities
+
+    MessageDirection:
+      type: string
+      enum:
+        - INBOUND
+        - OUTBOUND
+      description: Message transmission direction
+
+    MessageStatus:
+      type: string
+      enum:
+        - RECEIVED
+        - SENT
+        - DELIVERED
+        - FAILED
+      description: Delivery and processing status of message
+
+    PaginationMeta:
+      type: object
+      required:
+        - total
+        - page
+        - limit
+        - totalPages
+        - hasNextPage
+        - hasPreviousPage
+      properties:
+        total:
+          type: integer
+          example: 42
+        page:
+          type: integer
+          example: 1
+        limit:
+          type: integer
+          example: 20
+        totalPages:
+          type: integer
+          example: 3
+        hasNextPage:
+          type: boolean
+          example: true
+        hasPreviousPage:
+          type: boolean
+          example: false
+
+    ApiError:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          example: VALIDATION_ERROR
+        message:
+          type: string
+          example: Invalid input parameters
+        details:
+          type: object
+          nullable: true
+
+    ApiErrorEnvelope:
+      type: object
+      required:
+        - success
+        - error
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          $ref: '#/components/schemas/ApiError'
+
+    HealthResponse:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          required:
+            - status
+            - timestamp
+            - uptimeSeconds
+            - environment
+          properties:
+            status:
+              type: string
+              example: ok
+            timestamp:
+              type: string
+              format: date-time
+            uptimeSeconds:
+              type: integer
+              example: 120
+            environment:
+              type: string
+              example: development
+
+    LoginInput:
+      type: object
+      required:
+        - email
+        - password
+      properties:
+        email:
+          type: string
+          format: email
+          example: emmanuel@frankedu-global.com
+        password:
+          type: string
+          minLength: 8
+          example: <ADMIN_PASSWORD>
+
+    RegisterInput:
+      type: object
+      required:
+        - email
+        - password
+        - name
+      properties:
+        email:
+          type: string
+          format: email
+          example: agent@frankedu-global.com
+        password:
+          type: string
+          minLength: 8
+          example: SecurePassword123!
+        name:
+          type: string
+          minLength: 2
+          example: Sarah Jenkins
+        role:
+          $ref: '#/components/schemas/Role'
+          default: AGENT
+
+    RefreshTokenInput:
+      type: object
+      required:
+        - refreshToken
+      properties:
+        refreshToken:
+          type: string
+          minLength: 32
+          example: 5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1f0e9d8c7b6a5f4e
+
+    LogoutInput:
+      type: object
+      required:
+        - refreshToken
+      properties:
+        refreshToken:
+          type: string
+          minLength: 32
+          example: 5f4e3d2c1b0a9f8e7d6c5b4a3f2e1d0c9b8a7f6e5d4c3b2a1f0e9d8c7b6a5f4e
+
+    User:
+      type: object
+      required:
+        - id
+        - email
+        - name
+        - role
+      properties:
+        id:
+          type: string
+          format: uuid
+          example: 3c9b1d8e-7e2a-4b9f-8c1d-0e1f2a3b4c5d
+        email:
+          type: string
+          format: email
+          example: emmanuel@frankedu-global.com
+        name:
+          type: string
+          example: Frankly Emmanuel
+        role:
+          $ref: '#/components/schemas/Role'
+
+    AuthSessionResponse:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          required:
+            - user
+            - accessToken
+            - refreshToken
+          properties:
+            user:
+              $ref: '#/components/schemas/User'
+            accessToken:
+              type: string
+            refreshToken:
+              type: string
+
+    TokenRefreshResponse:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          required:
+            - accessToken
+            - refreshToken
+          properties:
+            accessToken:
+              type: string
+            refreshToken:
+              type: string
+
+    UserResponseEnvelope:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          $ref: '#/components/schemas/User'
+
+    MessageResponse:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          required:
+            - message
+          properties:
+            message:
+              type: string
+              example: Operation completed successfully
+
+    CreateContactInput:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+          minLength: 1
+          example: Alex Michaelides
+        primaryEmail:
+          type: string
+          format: email
+          nullable: true
+          example: alex@example.com
+        primaryPhone:
+          type: string
+          minLength: 5
+          nullable: true
+          example: '+35799123456'
+        instagramHandle:
+          type: string
+          nullable: true
+          example: alex_cyprus
+        metadata:
+          type: object
+          nullable: true
+
+    UpdateContactInput:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          example: Alex Michaelides Updated
+        primaryEmail:
+          type: string
+          format: email
+          nullable: true
+          example: alex.updated@example.com
+        primaryPhone:
+          type: string
+          minLength: 5
+          nullable: true
+          example: '+35799988776'
+        instagramHandle:
+          type: string
+          nullable: true
+          example: alex_cyprus_new
+        metadata:
+          type: object
+          nullable: true
+
+    Contact:
+      type: object
+      required:
+        - id
+        - name
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        primaryEmail:
+          type: string
+          nullable: true
+        primaryPhone:
+          type: string
+          nullable: true
+        instagramHandle:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    ContactResponse:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          $ref: '#/components/schemas/Contact'
+
+    PaginatedContactsResponse:
+      type: object
+      required:
+        - success
+        - data
+        - meta
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Contact'
+        meta:
+          $ref: '#/components/schemas/PaginationMeta'
+
+    ContactDetailResponse:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          allOf:
+            - $ref: '#/components/schemas/Contact'
+            - type: object
+              properties:
+                leads:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/Lead'
+                conversations:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                        format: uuid
+                      channel:
+                        $ref: '#/components/schemas/ChannelType'
+                      channelThreadId:
+                        type: string
+                        nullable: true
+                      lastMessageAt:
+                        type: string
+                        format: date-time
+                      createdAt:
+                        type: string
+                        format: date-time
+
+    CreateLeadInput:
+      type: object
+      required:
+        - title
+        - category
+        - contactId
+      properties:
+        title:
+          type: string
+          minLength: 1
+          example: Paphos Seafront Apartment Inquiry
+        category:
+          $ref: '#/components/schemas/LeadCategory'
+        status:
+          $ref: '#/components/schemas/LeadStatus'
+          default: NEW
+        contactId:
+          type: string
+          format: uuid
+        assignedToUserId:
+          type: string
+          format: uuid
+          nullable: true
+        sourceChannel:
+          $ref: '#/components/schemas/ChannelType'
+          default: WEBSITE_FORM
+        notes:
+          type: string
+          nullable: true
+        nextActionRequired:
+          type: string
+          nullable: true
+        nextActionDueDate:
+          type: string
+          format: date-time
+          nullable: true
+
+    UpdateLeadInput:
+      type: object
+      properties:
+        title:
+          type: string
+          minLength: 1
+        category:
+          $ref: '#/components/schemas/LeadCategory'
+        sourceChannel:
+          $ref: '#/components/schemas/ChannelType'
+        assignedToUserId:
+          type: string
+          format: uuid
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+        nextActionRequired:
+          type: string
+          nullable: true
+        nextActionDueDate:
+          type: string
+          format: date-time
+          nullable: true
+
+    UpdateLeadStatusInput:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          $ref: '#/components/schemas/LeadStatus'
+        note:
+          type: string
+          nullable: true
+          example: Client scheduled property tour for next Tuesday.
+
+    AssignLeadInput:
+      type: object
+      required:
+        - assignedToUserId
+      properties:
+        assignedToUserId:
+          type: string
+          format: uuid
+          nullable: true
+
+    Lead:
+      type: object
+      required:
+        - id
+        - title
+        - category
+        - status
+        - sourceChannel
+        - contactId
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        category:
+          $ref: '#/components/schemas/LeadCategory'
+        status:
+          $ref: '#/components/schemas/LeadStatus'
+        sourceChannel:
+          $ref: '#/components/schemas/ChannelType'
+        contactId:
+          type: string
+          format: uuid
+        assignedToUserId:
+          type: string
+          format: uuid
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+        nextActionRequired:
+          type: string
+          nullable: true
+        nextActionDueDate:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        contact:
+          $ref: '#/components/schemas/Contact'
+        assignedTo:
+          $ref: '#/components/schemas/User'
+          nullable: true
+
+    LeadResponse:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          $ref: '#/components/schemas/Lead'
+
+    PaginatedLeadsResponse:
+      type: object
+      required:
+        - success
+        - data
+        - meta
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Lead'
+        meta:
+          $ref: '#/components/schemas/PaginationMeta'
+
+    LeadDetailResponse:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          allOf:
+            - $ref: '#/components/schemas/Lead'
+            - type: object
+              properties:
+                conversations:
+                  type: array
+                  items:
+                    type: object
+                    properties:
+                      id:
+                        type: string
+                        format: uuid
+                      channel:
+                        $ref: '#/components/schemas/ChannelType'
+                      channelThreadId:
+                        type: string
+                        nullable: true
+                      lastMessageAt:
+                        type: string
+                        format: date-time
+                activities:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/Activity'
+
+    CreateActivityInput:
+      type: object
+      required:
+        - description
+      properties:
+        type:
+          $ref: '#/components/schemas/ActivityType'
+          default: NOTE_ADDED
+        description:
+          type: string
+          minLength: 1
+          example: Sent proposal documentation via WhatsApp
+        metadata:
+          type: object
+          nullable: true
+
+    Activity:
+      type: object
+      required:
+        - id
+        - leadId
+        - type
+        - description
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        leadId:
+          type: string
+          format: uuid
+        userId:
+          type: string
+          format: uuid
+          nullable: true
+        type:
+          $ref: '#/components/schemas/ActivityType'
+        description:
+          type: string
+        metadata:
+          type: object
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+        user:
+          type: object
+          nullable: true
+          properties:
+            id:
+              type: string
+              format: uuid
+            name:
+              type: string
+            email:
+              type: string
+
+    ActivityResponse:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          $ref: '#/components/schemas/Activity'
+
+    ActivityListResponse:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Activity'
+
+    DashboardMetricsResponse:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          required:
+            - totals
+            - byStatus
+            - byCategory
+            - nextActions
+            - recentActivity
+          properties:
+            totals:
+              type: object
+              required:
+                - totalLeads
+                - totalContacts
+              properties:
+                totalLeads:
+                  type: integer
+                totalContacts:
+                  type: integer
+            byStatus:
+              type: object
+              required:
+                - NEW
+                - CONTACTED
+                - REPLIED
+                - QUALIFIED
+                - LOST
+                - CLOSED_WON
+              properties:
+                NEW:
+                  type: integer
+                CONTACTED:
+                  type: integer
+                REPLIED:
+                  type: integer
+                QUALIFIED:
+                  type: integer
+                LOST:
+                  type: integer
+                CLOSED_WON:
+                  type: integer
+            byCategory:
+              type: object
+              required:
+                - PROPERTY_BUYER_INVESTOR
+                - PROPERTY_SELLER_AGENT
+                - STUDY_ABROAD_STUDENT
+                - UNIVERSITY_EDUCATION_PARTNER
+                - OTHER_BUSINESS
+              properties:
+                PROPERTY_BUYER_INVESTOR:
+                  type: integer
+                PROPERTY_SELLER_AGENT:
+                  type: integer
+                STUDY_ABROAD_STUDENT:
+                  type: integer
+                UNIVERSITY_EDUCATION_PARTNER:
+                  type: integer
+                OTHER_BUSINESS:
+                  type: integer
+            nextActions:
+              type: object
+              required:
+                - totalPending
+                - overdue
+                - dueToday
+                - upcoming
+                - noDueDate
+              properties:
+                totalPending:
+                  type: integer
+                overdue:
+                  type: integer
+                dueToday:
+                  type: integer
+                upcoming:
+                  type: integer
+                noDueDate:
+                  type: integer
+            recentActivity:
+              type: object
+              required:
+                - leadsCreatedToday
+                - leadsCreatedThisWeek
+              properties:
+                leadsCreatedToday:
+                  type: integer
+                leadsCreatedThisWeek:
+                  type: integer
+
+    SendOutboundMessageInput:
+      type: object
+      required:
+        - body
+      properties:
+        body:
+          type: string
+          minLength: 1
+          example: Hello, thank you for contacting FranklyEdu!
+
+    Message:
+      type: object
+      required:
+        - id
+        - conversationId
+        - direction
+        - status
+        - body
+        - senderIdentifier
+        - recipientIdentifier
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        conversationId:
+          type: string
+          format: uuid
+        direction:
+          $ref: '#/components/schemas/MessageDirection'
+        status:
+          $ref: '#/components/schemas/MessageStatus'
+        body:
+          type: string
+        senderIdentifier:
+          type: string
+        recipientIdentifier:
+          type: string
+        externalMessageId:
+          type: string
+          nullable: true
+        rawPayload:
+          type: object
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+
+    MessageRecordResponse:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          $ref: '#/components/schemas/Message'
+
+    ConversationListItem:
+      type: object
+      required:
+        - id
+        - contactId
+        - channel
+        - lastMessageAt
+        - isUnread
+        - contact
+      properties:
+        id:
+          type: string
+          format: uuid
+        contactId:
+          type: string
+          format: uuid
+        leadId:
+          type: string
+          format: uuid
+          nullable: true
+        channel:
+          $ref: '#/components/schemas/ChannelType'
+        channelThreadId:
+          type: string
+          nullable: true
+        lastMessageAt:
+          type: string
+          format: date-time
+        lastReadAt:
+          type: string
+          format: date-time
+          nullable: true
+        isUnread:
+          type: boolean
+          example: false
+        contact:
+          type: object
+          properties:
+            id:
+              type: string
+              format: uuid
+            name:
+              type: string
+            primaryEmail:
+              type: string
+              nullable: true
+            primaryPhone:
+              type: string
+              nullable: true
+            instagramHandle:
+              type: string
+              nullable: true
+        lead:
+          type: object
+          nullable: true
+          properties:
+            id:
+              type: string
+              format: uuid
+            title:
+              type: string
+            category:
+              $ref: '#/components/schemas/LeadCategory'
+            status:
+              $ref: '#/components/schemas/LeadStatus'
+            assignedToUserId:
+              type: string
+              format: uuid
+              nullable: true
+        latestMessage:
+          type: object
+          nullable: true
+          properties:
+            id:
+              type: string
+              format: uuid
+            direction:
+              $ref: '#/components/schemas/MessageDirection'
+            status:
+              $ref: '#/components/schemas/MessageStatus'
+            body:
+              type: string
+            createdAt:
+              type: string
+              format: date-time
+
+    PaginatedConversationsResponse:
+      type: object
+      required:
+        - success
+        - data
+        - meta
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ConversationListItem'
+        meta:
+          $ref: '#/components/schemas/PaginationMeta'
+
+    ConversationDetailResponse:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          required:
+            - id
+            - contactId
+            - channel
+            - lastMessageAt
+            - isUnread
+            - messages
+          properties:
+            id:
+              type: string
+              format: uuid
+            contactId:
+              type: string
+              format: uuid
+            leadId:
+              type: string
+              format: uuid
+              nullable: true
+            channel:
+              $ref: '#/components/schemas/ChannelType'
+            channelThreadId:
+              type: string
+              nullable: true
+            lastMessageAt:
+              type: string
+              format: date-time
+            lastReadAt:
+              type: string
+              format: date-time
+              nullable: true
+            isUnread:
+              type: boolean
+              example: false
+            contact:
+              $ref: '#/components/schemas/Contact'
+            lead:
+              $ref: '#/components/schemas/Lead'
+              nullable: true
+            messages:
+              type: array
+              items:
+                $ref: '#/components/schemas/Message'
+
+    MarkReadResponse:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          required:
+            - id
+            - isUnread
+          properties:
+            id:
+              type: string
+              format: uuid
+            lastReadAt:
+              type: string
+              format: date-time
+              nullable: true
+            isUnread:
+              type: boolean
+              example: false
+
+    WebsiteFormPayload:
+      type: object
+      properties:
+        name:
+          type: string
+          example: Elena Constantinou
+        email:
+          type: string
+          format: email
+          example: elena@example.com
+        phone:
+          type: string
+          example: '+35799778899'
+        category:
+          type: string
+          enum:
+            - PROPERTY_BUYER_INVESTOR
+            - PROPERTY_SELLER_AGENT
+            - STUDY_ABROAD_STUDENT
+            - UNIVERSITY_EDUCATION_PARTNER
+            - OTHER_BUSINESS
+          example: PROPERTY_BUYER_INVESTOR
+        message:
+          type: string
+          example: Looking for a 3-bedroom villa in Paphos near the sea.
+        notes:
+          type: string
+          example: Budget €800k - €1.2M
+        submissionId:
+          type: string
+          example: web_sub_998877
+        _hp_company:
+          type: string
+          description: Honeypot bot detection field. Must be empty for legitimate users.
+          example: ''
+
+    WebhookProcessingResponse:
+      type: object
+      required:
+        - success
+        - data
+      properties:
+        success:
+          type: boolean
+          example: true
+        data:
+          type: object
+          required:
+            - channel
+            - processedCount
+            - messages
+          properties:
+            channel:
+              $ref: '#/components/schemas/ChannelType'
+            processedCount:
+              type: integer
+              example: 1
+            messages:
+              type: array
+              items:
+                type: object
+                required:
+                  - messageId
+                  - deduplicated
+                  - leadId
+                  - contactId
+                properties:
+                  messageId:
+                    type: string
+                    format: uuid
+                  externalMessageId:
+                    type: string
+                    nullable: true
+                  deduplicated:
+                    type: boolean
+                  leadId:
+                    type: string
+                    format: uuid
+                  contactId:
+                    type: string
+                    format: uuid
+
+  responses:
+    BadRequestError:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorEnvelope'
+          example:
+            success: false
+            error:
+              code: BAD_REQUEST
+              message: Invalid request parameters
+
+    ValidationError:
+      description: Request validation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorEnvelope'
+          example:
+            success: false
+            error:
+              code: VALIDATION_ERROR
+              message: Request validation failed
+              details:
+                body:
+                  email:
+                    - Valid email address is required
+
+    UnauthorizedError:
+      description: Missing, invalid, or expired authentication token
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorEnvelope'
+          example:
+            success: false
+            error:
+              code: UNAUTHORIZED
+              message: Authentication required
+
+    ForbiddenError:
+      description: Insufficient permissions for requested operation
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorEnvelope'
+          example:
+            success: false
+            error:
+              code: FORBIDDEN
+              message: Insufficient permissions to perform this action
+
+    NotFoundError:
+      description: Requested resource was not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorEnvelope'
+          example:
+            success: false
+            error:
+              code: NOT_FOUND
+              message: Resource not found
+
+    ConflictError:
+      description: Resource conflict or duplicate identifier
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ApiErrorEnvelope'
+          example:
+            success: false
+            error:
+              code: CONFLICT
+              message: Contact with this email already exists

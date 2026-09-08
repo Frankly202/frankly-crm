@@ -1,0 +1,39 @@
+{
+  "object": "whatsapp_business_account",
+  "entry": [
+    {
+      "id": "100000000000001",
+      "changes": [
+        {
+          "value": {
+            "messaging_product": "whatsapp",
+            "metadata": {
+              "display_phone_number": "+35799000000",
+              "phone_number_id": "999999999999999"
+            },
+            "contacts": [
+              {
+                "profile": {
+                  "name": "Costas Demetriou"
+                },
+                "wa_id": "35799445566"
+              }
+            ],
+            "messages": [
+              {
+                "from": "35799445566",
+                "id": "wamid.HBgLMzU3OTk0NDU1NjYVAgASGBQzQTU5NzNGODk4MDhD",
+                "timestamp": "1725717600",
+                "text": {
+                  "body": "Good day Frankly, I want to inquire about student accommodation in Nicosia."
+                },
+                "type": "text"
+              }
+            ]
+          },
+          "field": "messages"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,12 @@
+{
+  "type": "email.received",
+  "created_at": "2026-09-07T14:30:00.000Z",
+  "data": {
+    "email_id": "email_rec_01J8K9L0M1N2P3Q4R5S6T7U8V9",
+    "from": "Katerina Vanezi <katerina.v@example.com>",
+    "to": ["emmanuel@frankedu-global.com"],
+    "subject": "Inquiry regarding Medical School admissions in Cyprus",
+    "text": "Dear Frankly,\n\nI am looking for guidance on English-language medical degree programs in Cyprus for the upcoming academic year.\n\nKind regards,\nKaterina",
+    "html": "<p>Dear Frankly,<br/><br/>I am looking for guidance on English-language medical degree programs in Cyprus for the upcoming academic year.<br/><br/>Kind regards,<br/>Katerina</p>"
+  }
+}

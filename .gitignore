@@ -1,0 +1,59 @@
+# Dependencies
+node_modules/
+.pnp/
+.pnp.js
+
+# Environment variables & secrets (allow .env.example templates only)
+**/.env
+**/.env.*
+!**/.env.example
+*.pem
+*.key
+.dev.vars
+
+# Build, Bundler & Dist
+dist/
+dist-ssr/
+build/
+.next/
+out/
+.output/
+.wrangler/
+.tanstack/
+.nitro/
+.vinxi/
+*.tsbuildinfo
+
+# Database / Persistent volumes
+postgres_data/
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# IDE, Editor & Agent workspace state
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+*.swo
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+.gemini/
+.agents/
+
+# Testing & Coverage
+coverage/
+.nyc_output/

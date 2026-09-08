@@ -1,0 +1,775 @@
+{
+  "info": {
+    "_postman_id": "9de6e9e9-3f15-47c1-a27a-f7bd30dfdc99",
+    "name": "FranklyEdu Global CRM API",
+    "description": "Comprehensive Postman collection for testing all Frankly CRM MVP endpoints, authentication flows, domain entities, unified inbox, and webhook simulators.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:4000/api/v1",
+      "type": "string"
+    },
+    {
+      "key": "adminEmail",
+      "value": "emmanuel@frankedu-global.com",
+      "type": "string"
+    },
+    {
+      "key": "adminPassword",
+      "value": "<ADMIN_PASSWORD>",
+      "type": "string"
+    },
+    {
+      "key": "accessToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "refreshToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "contactId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "leadId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "conversationId",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "0. System",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": ["{{baseUrl}}"],
+              "path": ["health"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "1. Authentication",
+      "item": [
+        {
+          "name": "1.1 Login (Admin)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    var json = pm.response.json();",
+                  "    if (json.data && json.data.accessToken) {",
+                  "        pm.collectionVariables.set('accessToken', json.data.accessToken);",
+                  "        pm.collectionVariables.set('refreshToken', json.data.refreshToken);",
+                  "        console.log('Access and Refresh tokens updated in collection variables');",
+                  "    }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{adminEmail}}\",\n  \"password\": \"{{adminPassword}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "login"]
+            }
+          }
+        },
+        {
+          "name": "1.2 Register Agent (ADMIN only)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"sarah.agent@frankedu-global.com\",\n  \"password\": \"SecurePassword123!\",\n  \"name\": \"Sarah Jenkins\",\n  \"role\": \"AGENT\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/register",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "register"]
+            }
+          }
+        },
+        {
+          "name": "1.3 Get Current User Profile (Me)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/me",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "me"]
+            }
+          }
+        },
+        {
+          "name": "1.4 Refresh Token Pair",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    var json = pm.response.json();",
+                  "    if (json.data && json.data.accessToken) {",
+                  "        pm.collectionVariables.set('accessToken', json.data.accessToken);",
+                  "        pm.collectionVariables.set('refreshToken', json.data.refreshToken);",
+                  "        console.log('Rotated access and refresh tokens updated');",
+                  "    }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/refresh",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "refresh"]
+            }
+          }
+        },
+        {
+          "name": "1.5 Logout",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/auth/logout",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "logout"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Contacts",
+      "item": [
+        {
+          "name": "2.1 List Contacts",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/contacts?page=1&limit=20&search=",
+              "host": ["{{baseUrl}}"],
+              "path": ["contacts"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" },
+                { "key": "search", "value": "" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "2.2 Create Contact",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    var json = pm.response.json();",
+                  "    if (json.data && json.data.id) {",
+                  "        pm.collectionVariables.set('contactId', json.data.id);",
+                  "        console.log('Saved contactId: ' + json.data.id);",
+                  "    }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Alex Michaelides\",\n  \"primaryEmail\": \"alex.michaelides@example.com\",\n  \"primaryPhone\": \"+35799123456\",\n  \"instagramHandle\": \"alex_cyprus\",\n  \"metadata\": {\n    \"country\": \"Cyprus\",\n    \"city\": \"Limassol\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/contacts",
+              "host": ["{{baseUrl}}"],
+              "path": ["contacts"]
+            }
+          }
+        },
+        {
+          "name": "2.3 Get Contact by ID",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/contacts/{{contactId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["contacts", "{{contactId}}"]
+            }
+          }
+        },
+        {
+          "name": "2.4 Update Contact",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Alex Michaelides Updated\",\n  \"primaryPhone\": \"+35799988776\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/contacts/{{contactId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["contacts", "{{contactId}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Leads & Activities",
+      "item": [
+        {
+          "name": "3.1 List Leads",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/leads?page=1&limit=20&category=&status=&search=",
+              "host": ["{{baseUrl}}"],
+              "path": ["leads"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" },
+                { "key": "category", "value": "" },
+                { "key": "status", "value": "" },
+                { "key": "search", "value": "" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "3.2 Create Lead",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 201) {",
+                  "    var json = pm.response.json();",
+                  "    if (json.data && json.data.id) {",
+                  "        pm.collectionVariables.set('leadId', json.data.id);",
+                  "        console.log('Saved leadId: ' + json.data.id);",
+                  "    }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Limassol Seafront Villa Enquiry\",\n  \"category\": \"PROPERTY_BUYER_INVESTOR\",\n  \"contactId\": \"{{contactId}}\",\n  \"status\": \"NEW\",\n  \"sourceChannel\": \"WEBSITE_FORM\",\n  \"notes\": \"Interested in luxury 4-bedroom villa with panoramic sea view, budget €1.8M.\",\n  \"nextActionRequired\": \"Send catalog of available seafront developments\",\n  \"nextActionDueDate\": \"2026-09-10T12:00:00.000Z\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/leads",
+              "host": ["{{baseUrl}}"],
+              "path": ["leads"]
+            }
+          }
+        },
+        {
+          "name": "3.3 Get Lead by ID",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/leads/{{leadId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["leads", "{{leadId}}"]
+            }
+          }
+        },
+        {
+          "name": "3.4 Update Lead",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Limassol Seafront Villa - Viewing Scheduled\",\n  \"nextActionRequired\": \"Confirm flight dates and pick-up arrangements\",\n  \"nextActionDueDate\": \"2026-09-12T10:00:00.000Z\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/leads/{{leadId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["leads", "{{leadId}}"]
+            }
+          }
+        },
+        {
+          "name": "3.5 Transition Lead Status",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"QUALIFIED\",\n  \"note\": \"Client pre-approved for mortgage and confirmed visiting Limassol next month.\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/leads/{{leadId}}/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["leads", "{{leadId}}", "status"]
+            }
+          }
+        },
+        {
+          "name": "3.6 Assign Lead",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"assignedToUserId\": null\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/leads/{{leadId}}/assign",
+              "host": ["{{baseUrl}}"],
+              "path": ["leads", "{{leadId}}", "assign"]
+            }
+          }
+        },
+        {
+          "name": "3.7 Get Lead Activity Timeline",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/leads/{{leadId}}/activities",
+              "host": ["{{baseUrl}}"],
+              "path": ["leads", "{{leadId}}", "activities"]
+            }
+          }
+        },
+        {
+          "name": "3.8 Add Activity Note to Lead",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"NOTE_ADDED\",\n  \"description\": \"Conducted initial video conference with client. Confirmed budget and preferences.\",\n  \"metadata\": {\n    \"duration\": \"25m\",\n    \"medium\": \"Google Meet\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/leads/{{leadId}}/activities",
+              "host": ["{{baseUrl}}"],
+              "path": ["leads", "{{leadId}}", "activities"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Dashboard Metrics",
+      "item": [
+        {
+          "name": "4.1 Get CRM Dashboard Metrics",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/leads/dashboard/metrics",
+              "host": ["{{baseUrl}}"],
+              "path": ["leads", "dashboard", "metrics"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Conversations (Unified Inbox)",
+      "item": [
+        {
+          "name": "5.1 List Conversations",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "if (pm.response.code === 200) {",
+                  "    var json = pm.response.json();",
+                  "    if (json.data && json.data.length > 0) {",
+                  "        pm.collectionVariables.set('conversationId', json.data[0].id);",
+                  "        console.log('Saved conversationId: ' + json.data[0].id);",
+                  "    }",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/conversations?page=1&limit=20&unreadOnly=&channel=",
+              "host": ["{{baseUrl}}"],
+              "path": ["conversations"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" },
+                { "key": "unreadOnly", "value": "" },
+                { "key": "channel", "value": "" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "5.2 Get Conversation by ID",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/conversations/{{conversationId}}",
+              "host": ["{{baseUrl}}"],
+              "path": ["conversations", "{{conversationId}}"]
+            }
+          }
+        },
+        {
+          "name": "5.3 Send Outbound Reply Message",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"body\": \"Hello Alex, thank you for reaching out to FranklyEdu Global! We will send you the property listings shortly.\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/conversations/{{conversationId}}/messages",
+              "host": ["{{baseUrl}}"],
+              "path": ["conversations", "{{conversationId}}", "messages"]
+            }
+          }
+        },
+        {
+          "name": "5.4 Mark Conversation as Read",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{accessToken}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/conversations/{{conversationId}}/read",
+              "host": ["{{baseUrl}}"],
+              "path": ["conversations", "{{conversationId}}", "read"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Webhooks & Channels",
+      "item": [
+        {
+          "name": "6.1 Website Enquiry Form (Public)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Elena Constantinou\",\n  \"email\": \"elena.constantinou@example.com\",\n  \"phone\": \"+35799778899\",\n  \"category\": \"PROPERTY_BUYER_INVESTOR\",\n  \"message\": \"Interested in viewing 3-bedroom penthouses in Paphos.\",\n  \"submissionId\": \"web_sub_pm_001\",\n  \"_hp_company\": \"\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/webhooks/website",
+              "host": ["{{baseUrl}}"],
+              "path": ["webhooks", "website"]
+            }
+          }
+        },
+        {
+          "name": "6.2 WhatsApp - Meta Challenge Verification",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/webhooks/whatsapp?hub.mode=subscribe&hub.verify_token=frankly_test_verify_token&hub.challenge=test_meta_challenge_12345",
+              "host": ["{{baseUrl}}"],
+              "path": ["webhooks", "whatsapp"],
+              "query": [
+                { "key": "hub.mode", "value": "subscribe" },
+                { "key": "hub.verify_token", "value": "frankly_test_verify_token" },
+                { "key": "hub.challenge", "value": "test_meta_challenge_12345" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "6.3 WhatsApp - Inbound Message Webhook (Fixture)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-local-fixture-test",
+                "value": "true"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"object\": \"whatsapp_business_account\",\n  \"entry\": [\n    {\n      \"id\": \"109876543210987\",\n      \"changes\": [\n        {\n          \"value\": {\n            \"messaging_product\": \"whatsapp\",\n            \"metadata\": {\n              \"display_phone_number\": \"+35799112233\",\n              \"phone_number_id\": \"123456789012345\"\n            },\n            \"contacts\": [\n              {\n                \"profile\": { \"name\": \"Demetris Georgiou\" },\n                \"wa_id\": \"35799554433\"\n              }\n            ],\n            \"messages\": [\n              {\n                \"from\": \"35799554433\",\n                \"id\": \"wamid.TEST_WA_001\",\n                \"timestamp\": \"1757250000\",\n                \"text\": {\n                  \"body\": \"Hello! I would like to inquire about university tuition and admission deadlines for winter semester.\"\n                },\n                \"type\": \"text\"\n              }\n            ]\n          },\n          \"field\": \"messages\"\n        }\n      ]\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/webhooks/whatsapp",
+              "host": ["{{baseUrl}}"],
+              "path": ["webhooks", "whatsapp"]
+            }
+          }
+        },
+        {
+          "name": "6.4 Instagram - Inbound DM Webhook (Fixture)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-local-fixture-test",
+                "value": "true"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"object\": \"instagram\",\n  \"entry\": [\n    {\n      \"id\": \"17841400000000000\",\n      \"time\": 1757250000,\n      \"messaging\": [\n        {\n          \"sender\": { \"id\": \"ig_user_dimitris_99\" },\n          \"recipient\": { \"id\": \"17841400000000000\" },\n          \"timestamp\": 1757250000,\n          \"message\": {\n            \"mid\": \"m_TEST_IG_001\",\n            \"text\": \"Hi Frankly team! Do you offer guidance on student visa requirements?\"\n          }\n        }\n      ]\n    }\n  ]\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/webhooks/instagram",
+              "host": ["{{baseUrl}}"],
+              "path": ["webhooks", "instagram"]
+            }
+          }
+        },
+        {
+          "name": "6.5 Resend - Inbound Email Webhook (Fixture)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-local-fixture-test",
+                "value": "true"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"type\": \"email.received\",\n  \"data\": {\n    \"email_id\": \"email_TEST_RESEND_001\",\n    \"from\": \"Katerina Zenonos <katerina.zenonos@example.com>\",\n    \"to\": [\"emmanuel@frankedu-global.com\"],\n    \"subject\": \"Partnership Inquiry with European University Cyprus\",\n    \"text\": \"Dear Frankly,\\n\\nWe are reaching out regarding educational partnership agreements for the upcoming academic year.\\n\\nKind regards,\\nKaterina\",\n    \"created_at\": \"2026-09-07T14:00:00.000Z\"\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/webhooks/resend",
+              "host": ["{{baseUrl}}"],
+              "path": ["webhooks", "resend"]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

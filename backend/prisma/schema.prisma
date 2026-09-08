@@ -1,0 +1,193 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  ADMIN
+  AGENT
+}
+
+enum LeadCategory {
+  PROPERTY_BUYER_INVESTOR
+  PROPERTY_SELLER_AGENT
+  STUDY_ABROAD_STUDENT
+  UNIVERSITY_EDUCATION_PARTNER
+  OTHER_BUSINESS
+}
+
+enum LeadStatus {
+  NEW
+  CONTACTED
+  REPLIED
+  QUALIFIED
+  LOST
+  CLOSED_WON
+}
+
+enum ChannelType {
+  WHATSAPP
+  INSTAGRAM
+  RESEND_EMAIL
+  WEBSITE_FORM
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum MessageStatus {
+  RECEIVED
+  SENT
+  DELIVERED
+  FAILED
+}
+
+enum ActivityType {
+  LEAD_CREATED
+  STATUS_CHANGED
+  NOTE_ADDED
+  NEXT_ACTION_SET
+  MESSAGE_SENT
+  MESSAGE_RECEIVED
+  LEAD_ASSIGNED
+}
+
+model User {
+  id           String         @id @default(uuid())
+  email        String         @unique
+  passwordHash String
+  name         String
+  role         Role           @default(AGENT)
+  isActive     Boolean        @default(true)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  refreshTokens RefreshToken[]
+  assignedLeads Lead[]         @relation("AssignedLeads")
+  activities    ActivityLog[]
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  tokenHash String    @unique
+  userId    String
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+model Contact {
+  id              String         @id @default(uuid())
+  name            String
+  primaryEmail    String?        @unique
+  primaryPhone    String?        @unique
+  instagramHandle String?        @unique
+  metadata        Json?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  leads         Lead[]
+  conversations Conversation[]
+
+  @@map("contacts")
+}
+
+model Lead {
+  id                 String       @id @default(uuid())
+  title              String
+  category           LeadCategory
+  status             LeadStatus   @default(NEW)
+  notes              String?
+  sourceChannel      ChannelType  @default(WEBSITE_FORM)
+  nextActionRequired String?
+  nextActionDueDate  DateTime?
+  contactId          String
+  assignedToUserId   String?
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+
+  contact       Contact        @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  assignedTo    User?          @relation("AssignedLeads", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+  conversations Conversation[]
+  activities    ActivityLog[]
+
+  @@index([contactId])
+  @@index([assignedToUserId])
+  @@index([category])
+  @@index([status])
+  @@map("leads")
+}
+
+model Conversation {
+  id              String      @id @default(uuid())
+  contactId       String
+  leadId          String?
+  channel         ChannelType
+  channelThreadId String?
+  lastMessageAt   DateTime    @default(now())
+  lastReadAt      DateTime?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  contact  Contact   @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  lead     Lead?     @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  messages Message[]
+
+  @@index([contactId])
+  @@index([leadId])
+  @@index([channel])
+  @@index([lastMessageAt])
+  @@index([lastReadAt])
+  @@map("conversations")
+}
+
+model Message {
+  id                  String           @id @default(uuid())
+  conversationId      String
+  direction           MessageDirection
+  status              MessageStatus    @default(RECEIVED)
+  body                String
+  senderIdentifier    String
+  recipientIdentifier String
+  externalMessageId   String?          @unique
+  rawPayload          Json?
+  createdAt           DateTime         @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+  @@index([senderIdentifier])
+  @@map("messages")
+}
+
+model ActivityLog {
+  id          String       @id @default(uuid())
+  leadId      String
+  userId      String?
+  type        ActivityType
+  description String
+  metadata    Json?
+  createdAt   DateTime     @default(now())
+
+  lead Lead  @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([leadId])
+  @@index([userId])
+  @@index([type])
+  @@index([createdAt])
+  @@map("activity_logs")
+}
