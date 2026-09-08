@@ -19,7 +19,11 @@
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:seed": "prisma db seed",
-    "db:admin-seed": "tsx prisma/admin-seed.ts"
+    "db:admin-seed": "tsx prisma/admin-seed.ts",
+    "start": "node dist/server.js"
+  },
+  "engines": {
+    "node": ">=22.0.0"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"
