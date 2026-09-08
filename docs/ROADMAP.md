@@ -290,11 +290,23 @@ This document is the **single source of truth** for the project lifecycle. Phase
   - **Local `.env` and `.env.example` updated**:
     - `DIRECT_URL` added to both files pointing to the same local Docker PostgreSQL URL as `DATABASE_URL` (no change to local dev behavior).
     - Comments explain the dev vs. production distinction clearly.
-- **Prisma/Supabase Connection Decision**:
-  - Prisma version: **6.19.3**.
-  - In Prisma v6, `directUrl` in `schema.prisma` is the correct and fully supported pattern (deprecated only in v7). `prisma.config.ts` is the v7+ path and is not applicable here.
-  - The codebase uses interactive transactions (`prisma.$transaction(async tx =>)`) at 7 call sites. Interactive transactions require a session-capable (non-Transaction Mode pooler) connection. `DIRECT_URL` routes the Prisma CLI and schema operations over the direct PostgreSQL port (5432), ensuring these always work correctly regardless of what `DATABASE_URL` is set to in production.
-  - No driver adapter (`@prisma/adapter-pg`) is required for this traditional Node.js/Express setup.
+- **Prisma/Supabase Connection Decision** (verified against official Supabase docs, Sep 2026):
+  - Prisma version: **6.19.3**. `directUrl` in `schema.prisma` is the correct, fully-supported pattern for Prisma v6 (`prisma.config.ts` is the v7+ migration path — not applicable here).
+  - **`DATABASE_URL` — Supavisor Session Mode (port 5432, IPv4)**:
+    - This is a **persistent Express backend on Render**, not a serverless/edge workload.
+    - Supabase guidance is explicit: Session Mode is the recommended connection for persistent backends on IPv4-only networks.
+    - Render is IPv4-only (confirmed by Supabase's own IPv4 docs listing Render alongside Vercel and GitHub Actions as IPv4-only platforms).
+    - The Direct connection (`db.[ref].supabase.co:5432`) is **IPv6** on the Free plan. Without the paid IPv4 add-on (~$4/month), Render cannot reach the Direct connection endpoint.
+    - Session Mode (`aws-[region].pooler.supabase.com:5432`) is always IPv4 on every plan tier, including Free.
+    - Session Mode preserves full PostgreSQL protocol semantics: prepared statements, interactive transactions, and long-lived connections all work correctly.
+    - **The 7 interactive transaction call sites remain fully valid with Session Mode.** Interactive transactions fail only with Transaction Mode (port 6543) because PgBouncer transaction mode multiplexes the underlying server connection between statements. Session Mode holds one server connection per client session — semantically identical to a direct connection from the application's perspective.
+    - Connection string format: `postgresql://postgres.[project-ref]:[password]@aws-[region].pooler.supabase.com:5432/postgres`
+  - **`DIRECT_URL` — Connection strategy for `prisma migrate deploy` (run-time migration context)**:
+    - `prisma migrate deploy` is run at deploy-time, also from Render. Since Render is IPv4-only, the **Direct connection is unreachable from Render on the Free plan** without the IPv4 add-on.
+    - **Recommended strategy for Render migrations**: Set `DIRECT_URL` to the **Supavisor Session Mode URL** (same as `DATABASE_URL` format, port 5432). `prisma migrate deploy` does not require an interactive transaction or prepared statements — it is compatible with the session-mode pooler.
+    - **Alternative if the IPv4 add-on is purchased**: Set `DIRECT_URL` to the Direct connection URL (`db.[ref].supabase.co:5432`). This bypasses the pooler entirely for the CLI path and is the purest form of the `directUrl` separation pattern.
+    - **Do not use Transaction Mode (port 6543) for `DIRECT_URL`**: `prisma migrate deploy` relies on DDL statements that are incompatible with transaction-mode pooling (PgBouncer's transaction mode does not support multi-statement DDL over a single connection).
+  - **No driver adapter** (`@prisma/adapter-pg`) is required for this traditional Node.js/Express setup.
 - **Validation Gates Passed**:
   - `prisma validate` — schema valid ✅
   - `prisma generate` — client regenerated ✅
@@ -306,12 +318,22 @@ This document is the **single source of truth** for the project lifecycle. Phase
   - Production seed guard: `NODE_ENV=production tsx prisma/seed.ts` exits with code 1 ✅
   - `admin-seed.ts`: known-default password rejected with exit code 1 ✅
   - Git diff secrets scan: no real credentials in tracked diff ✅
-- **Remaining Production Deployment Steps** (not in scope for Phase 11):
-  1. Create Supabase project and obtain both connection strings (direct port 5432 and pooled port 6543).
-  2. Set production environment variables: `DATABASE_URL` (pooled), `DIRECT_URL` (direct), `NODE_ENV=production`, `JWT_SECRET`, `INITIAL_ADMIN_PASSWORD`, `CORS_ORIGIN`, and provider keys.
-  3. Run `npm run db:deploy` against Supabase (applies all 2 migrations).
-  4. Run `npm run db:admin-seed` to provision the initial admin account (no sample data).
-  5. Deploy the backend to the chosen hosting platform (Render, Railway, etc.).
-  6. Verify `GET /api/v1/health` and admin login against the live Supabase database.
+- **Remaining Production Deployment Steps** (not in scope for Phase 11 — requires Supabase project creation):
+  1. Create a Supabase project and open the **Connect** dialog in the Supabase Dashboard.
+  2. Copy the **Session Mode** pooler connection string (`aws-[region].pooler.supabase.com:5432`). This will be used as **both** `DATABASE_URL` and `DIRECT_URL` on Render (Free plan, IPv4-only).
+     - **Exception**: If you purchase the Supabase IPv4 add-on, you may use the Direct connection string (`db.[ref].supabase.co:5432`) as `DIRECT_URL` instead.
+  3. Set Render environment variables:
+     - `DATABASE_URL` = Supavisor Session Mode URL (port 5432)
+     - `DIRECT_URL` = Supavisor Session Mode URL (port 5432) — or Direct URL if IPv4 add-on is active
+     - `NODE_ENV=production`
+     - `JWT_SECRET` — strong, unique, ≥32 chars
+     - `INITIAL_ADMIN_PASSWORD` — strong, unique, ≥12 chars
+     - `CORS_ORIGIN` — production frontend URL
+     - Provider keys as needed (`META_APP_SECRET`, `WHATSAPP_ACCESS_TOKEN`, etc.)
+  4. Run `npm run db:deploy` in the Render deploy pipeline (or as a one-off command) to apply all 2 migrations to Supabase.
+  5. Run `npm run db:admin-seed` once to provision the initial admin account (no sample data).
+  6. Deploy the backend service to Render.
+  7. Verify `GET /api/v1/health` returns 200 and admin login works against the live Supabase database.
+  8. (Optional, future) Purchase the Supabase IPv4 add-on if direct connection access is required for tooling such as `pg_dump`, external DB GUIs, or if you want `DIRECT_URL` to bypass the pooler for CLI operations.
 - **Completion Criteria**: All codebase readiness changes committed and validated; local dev unaffected; production deployment path fully documented and tested end-to-end against local DB.
-- **Dependencies / Blockers**: Actual Supabase project creation, connection string retrieval, and production hosting setup are external operational steps — not code-level blockers.
+- **Dependencies / Blockers**: Actual Supabase project creation, connection string retrieval, and Render service deployment are external operational steps — not code-level blockers. The IPv4/Render constraint means the Free plan Supabase project requires Session Mode for all Render-originated connections (runtime and migrations) until the IPv4 add-on is purchased.
