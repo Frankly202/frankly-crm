@@ -9,6 +9,8 @@ import {
 } from './channel-adapter.interface.js';
 import { normalizePhone } from '../../../common/utils/identifier.util.js';
 import { env } from '../../../config/env.js';
+import { BadGatewayError } from '../../../common/errors/app-error.js';
+import { logger } from '../../../common/utils/logger.js';
 
 interface MetaWhatsAppPayload {
   object?: string;
@@ -65,17 +67,19 @@ export class WhatsAppAdapter implements ChannelAdapter {
         .digest('hex')}`;
 
       try {
-        return crypto.timingSafeEqual(
-          Buffer.from(signatureHeader),
-          Buffer.from(expectedSignature),
-        );
+        const sigBuffer = Buffer.from(signatureHeader);
+        const expectedBuffer = Buffer.from(expectedSignature);
+        if (sigBuffer.length !== expectedBuffer.length) {
+          return false;
+        }
+        return crypto.timingSafeEqual(sigBuffer, expectedBuffer);
       } catch {
         return false;
       }
     }
 
-    // Fail closed in production if secret is not configured
-    if (env.NODE_ENV === 'production') {
+    // Fail closed in production or when live mode is active if secret is not configured
+    if (env.NODE_ENV === 'production' || env.PROVIDER_MODE === 'live') {
       return false;
     }
 
@@ -138,18 +142,92 @@ export class WhatsAppAdapter implements ChannelAdapter {
   }
 
   async sendOutboundMessage(params: OutboundMessageParams): Promise<OutboundDeliveryResult> {
-    // Local provider-agnostic simulator for MVP Phase 5
-    const externalMessageId = `wa_out_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
-    return {
-      success: true,
-      externalMessageId,
-      timestamp: new Date(),
-      details: {
-        channel: this.channel,
-        recipient: params.recipientIdentifier,
-        simulated: true,
-      },
-    };
+    if (env.PROVIDER_MODE === 'mock') {
+      const externalMessageId = `wa_out_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
+      return {
+        success: true,
+        externalMessageId,
+        timestamp: new Date(),
+        details: {
+          channel: this.channel,
+          recipient: params.recipientIdentifier,
+          simulated: true,
+        },
+      };
+    }
+
+    // Fail closed in live mode: credentials must be present
+    const phoneNumberId = env.WHATSAPP_PHONE_NUMBER_ID?.trim();
+    const accessToken = env.WHATSAPP_ACCESS_TOKEN?.trim();
+    const apiVersion = env.META_GRAPH_API_VERSION?.trim() || 'v26.0';
+
+    if (!phoneNumberId || !accessToken) {
+      throw new BadGatewayError(
+        'WhatsApp Cloud API is not configured or missing credentials in live mode',
+      );
+    }
+
+    // Clean recipient phone (E.164 without leading plus)
+    const recipientPhone = params.recipientIdentifier.replace(/[^0-9]/g, '');
+    if (!recipientPhone) {
+      throw new BadGatewayError('Invalid recipient phone number for WhatsApp message');
+    }
+
+    const url = `https://graph.facebook.com/${apiVersion}/${phoneNumberId}/messages`;
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to: recipientPhone,
+          type: 'text',
+          text: {
+            preview_url: false,
+            body: params.body,
+          },
+        }),
+      });
+
+      const responseBody = (await response.json().catch(() => ({}))) as {
+        messages?: Array<{ id: string }>;
+        error?: { message?: string; code?: number; error_subcode?: number };
+      };
+
+      if (!response.ok || !responseBody.messages?.[0]?.id) {
+        const errorMsg =
+          responseBody.error?.message || response.statusText || 'Meta Graph API error';
+        const errorCode = responseBody.error?.code;
+        logger.error(`Meta WhatsApp API delivery failed: ${errorMsg} (status ${response.status})`);
+        throw new BadGatewayError(`WhatsApp delivery failed: ${errorMsg}`, {
+          status: response.status,
+          code: errorCode,
+        });
+      }
+
+      return {
+        success: true,
+        externalMessageId: responseBody.messages[0].id,
+        timestamp: new Date(),
+        details: {
+          channel: this.channel,
+          recipient: recipientPhone,
+          simulated: false,
+        },
+      };
+    } catch (err) {
+      if (err instanceof BadGatewayError) {
+        throw err;
+      }
+      const message = err instanceof Error ? err.message : 'Network error';
+      logger.error(`Network error communicating with WhatsApp Cloud API: ${message}`);
+      throw new BadGatewayError(`WhatsApp API network failure: ${message}`);
+    }
   }
 }
 

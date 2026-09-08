@@ -7,6 +7,7 @@ import {
   UnauthorizedError,
   ForbiddenError,
   ConflictError,
+  BadGatewayError,
 } from '../../src/common/errors/app-error.js';
 
 describe('AppError Hierarchy', () => {
@@ -61,5 +62,13 @@ describe('AppError Hierarchy', () => {
     expect(error.message).toBe('Email already exists');
     expect(error.statusCode).toBe(409);
     expect(error.code).toBe('CONFLICT');
+  });
+
+  it('should instantiate BadGatewayError with 502 status', () => {
+    const error = new BadGatewayError('Provider failed', { upstreamCode: 'ERR_TIMEOUT' });
+    expect(error.message).toBe('Provider failed');
+    expect(error.statusCode).toBe(502);
+    expect(error.code).toBe('BAD_GATEWAY');
+    expect(error.details).toEqual({ upstreamCode: 'ERR_TIMEOUT' });
   });
 });

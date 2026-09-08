@@ -9,6 +9,8 @@ import {
 } from './channel-adapter.interface.js';
 import { normalizeInstagramHandle } from '../../../common/utils/identifier.util.js';
 import { env } from '../../../config/env.js';
+import { BadGatewayError } from '../../../common/errors/app-error.js';
+import { logger } from '../../../common/utils/logger.js';
 
 interface MetaInstagramPayload {
   object?: string;
@@ -55,17 +57,19 @@ export class InstagramAdapter implements ChannelAdapter {
         .digest('hex')}`;
 
       try {
-        return crypto.timingSafeEqual(
-          Buffer.from(signatureHeader),
-          Buffer.from(expectedSignature),
-        );
+        const sigBuffer = Buffer.from(signatureHeader);
+        const expectedBuffer = Buffer.from(expectedSignature);
+        if (sigBuffer.length !== expectedBuffer.length) {
+          return false;
+        }
+        return crypto.timingSafeEqual(sigBuffer, expectedBuffer);
       } catch {
         return false;
       }
     }
 
-    // Fail closed in production if secret is not configured
-    if (env.NODE_ENV === 'production') {
+    // Fail closed in production or when live mode is active if secret is not configured
+    if (env.NODE_ENV === 'production' || env.PROVIDER_MODE === 'live') {
       return false;
     }
 
@@ -97,7 +101,9 @@ export class InstagramAdapter implements ChannelAdapter {
           channel: ChannelType.INSTAGRAM,
           externalMessageId: event.message.mid,
           senderIdentifier,
-          senderName: event.sender.username ? `@${event.sender.username.replace(/^@/, '')}` : undefined,
+          senderName: event.sender.username
+            ? `@${event.sender.username.replace(/^@/, '')}`
+            : undefined,
           recipientIdentifier,
           body,
           rawPayload: event as unknown as Record<string, unknown>,
@@ -110,17 +116,92 @@ export class InstagramAdapter implements ChannelAdapter {
   }
 
   async sendOutboundMessage(params: OutboundMessageParams): Promise<OutboundDeliveryResult> {
-    const externalMessageId = `ig_out_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
-    return {
-      success: true,
-      externalMessageId,
-      timestamp: new Date(),
-      details: {
-        channel: this.channel,
-        recipient: params.recipientIdentifier,
-        simulated: true,
-      },
-    };
+    if (env.PROVIDER_MODE === 'mock') {
+      const externalMessageId = `ig_out_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
+      return {
+        success: true,
+        externalMessageId,
+        timestamp: new Date(),
+        details: {
+          channel: this.channel,
+          recipient: params.recipientIdentifier,
+          simulated: true,
+        },
+      };
+    }
+
+    // Fail closed in live mode: credentials must be present
+    const accessToken = env.INSTAGRAM_ACCESS_TOKEN?.trim();
+    const apiVersion = env.META_GRAPH_API_VERSION?.trim() || 'v26.0';
+
+    if (!accessToken) {
+      throw new BadGatewayError(
+        'Instagram Graph API is not configured or missing credentials in live mode',
+      );
+    }
+
+    let recipientId = params.recipientIdentifier.trim();
+    if (recipientId.startsWith('@')) {
+      recipientId = recipientId.slice(1);
+    }
+    if (!recipientId) {
+      throw new BadGatewayError('Invalid recipient identifier for Instagram message');
+    }
+
+    const url = `https://graph.facebook.com/${apiVersion}/me/messages`;
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          recipient: {
+            id: recipientId,
+          },
+          message: {
+            text: params.body,
+          },
+        }),
+      });
+
+      const responseBody = (await response.json().catch(() => ({}))) as {
+        message_id?: string;
+        recipient_id?: string;
+        error?: { message?: string; code?: number };
+      };
+
+      if (!response.ok || !responseBody.message_id) {
+        const errorMsg =
+          responseBody.error?.message || response.statusText || 'Meta Graph API error';
+        const errorCode = responseBody.error?.code;
+        logger.error(`Meta Instagram API delivery failed: ${errorMsg} (status ${response.status})`);
+        throw new BadGatewayError(`Instagram delivery failed: ${errorMsg}`, {
+          status: response.status,
+          code: errorCode,
+        });
+      }
+
+      return {
+        success: true,
+        externalMessageId: responseBody.message_id,
+        timestamp: new Date(),
+        details: {
+          channel: this.channel,
+          recipient: recipientId,
+          simulated: false,
+        },
+      };
+    } catch (err) {
+      if (err instanceof BadGatewayError) {
+        throw err;
+      }
+      const message = err instanceof Error ? err.message : 'Network error';
+      logger.error(`Network error communicating with Instagram Graph API: ${message}`);
+      throw new BadGatewayError(`Instagram API network failure: ${message}`);
+    }
   }
 }
 

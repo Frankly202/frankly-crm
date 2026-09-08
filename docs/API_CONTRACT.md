@@ -753,6 +753,39 @@ The backend implements unified inbound ingestion routes for all 4 channels:
 ```
 *Note: `_hp_company` is a honeypot field. If non-empty, the request is treated as bot spam and silently dropped.*
 
+### 6.8 External Provider Integration Model (Phase 9)
+
+Frankly CRM supports dual-mode operation for external communication channels via `PROVIDER_MODE`:
+
+1. **`PROVIDER_MODE=mock` (Default)**:
+   - Outbound dispatch returns simulated IDs (`wa_out_*`, `ig_out_*`, `resend_out_*`) with `simulated: true`.
+   - Inbound webhook testing accepts fixtures or signed simulation payloads without requiring live cloud assets.
+   - Ideal for continuous integration and local development.
+
+2. **`PROVIDER_MODE=live` (Fail-Closed)**:
+   - Outbound messages are dispatched via official HTTPS APIs:
+     - **WhatsApp**: `POST https://graph.facebook.com/${META_GRAPH_API_VERSION}/${WHATSAPP_PHONE_NUMBER_ID}/messages` (default version: `v26.0`).
+     - **Instagram**: `POST https://graph.facebook.com/${META_GRAPH_API_VERSION}/me/messages`.
+     - **Resend**: `POST https://api.resend.com/emails` (using configured `EMAIL_FROM_ADDRESS` and optional `EMAIL_REPLY_TO`).
+   - **Fail-Closed Security**: If required credentials are unset or invalid, live mode strictly refuses to simulate, throwing `502 BAD_GATEWAY` (`BadGatewayError`).
+   - **Replay Protection**: Resend webhooks enforce a strict 5-minute Svix timestamp tolerance window; Meta webhooks enforce idempotency via unique `wamid.*` message identifiers in the database layer.
+
+3. **Provider Health Diagnostics (`GET /api/v1/health`)**:
+   - The health endpoint includes non-sensitive configuration states for each provider (`NOT_CONFIGURED`, `CONFIGURED`, `MISCONFIGURED`):
+     ```json
+     {
+       "status": "ok",
+       "environment": "development",
+       "providers": {
+         "mode": "mock",
+         "metaGraphApiVersion": "v26.0",
+         "whatsapp": "NOT_CONFIGURED",
+         "instagram": "NOT_CONFIGURED",
+         "resend": "NOT_CONFIGURED"
+       }
+     }
+     ```
+
 ---
 
 ## 7. Frontend Integration Patterns (TanStack Query / Next.js)

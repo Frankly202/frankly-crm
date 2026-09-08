@@ -1,9 +1,6 @@
 import { prisma } from '../../config/database.js';
 import { NotFoundError, BadRequestError } from '../../common/errors/app-error.js';
-import {
-  ConversationQueryInput,
-  SendOutboundMessageInput,
-} from './conversation.schemas.js';
+import { ConversationQueryInput, SendOutboundMessageInput } from './conversation.schemas.js';
 import {
   parsePaginationParams,
   buildPaginationMeta,
@@ -13,6 +10,7 @@ import {
   MessageDirection,
   MessageStatus,
   ActivityType,
+  ChannelType,
   Prisma,
   Role,
 } from '@prisma/client';
@@ -190,14 +188,19 @@ export class ConversationService {
 
     // Determine target recipient identifier based on channel
     let recipientIdentifier = '';
-    if (conversation.contact.primaryPhone) {
-      recipientIdentifier = conversation.contact.primaryPhone;
-    } else if (conversation.contact.primaryEmail) {
-      recipientIdentifier = conversation.contact.primaryEmail;
-    } else if (conversation.contact.instagramHandle) {
-      recipientIdentifier = conversation.contact.instagramHandle;
-    } else if (conversation.channelThreadId) {
-      recipientIdentifier = conversation.channelThreadId;
+    if (conversation.channel === ChannelType.WHATSAPP) {
+      recipientIdentifier = conversation.contact.primaryPhone || conversation.channelThreadId || '';
+    } else if (conversation.channel === ChannelType.RESEND_EMAIL) {
+      recipientIdentifier = conversation.contact.primaryEmail || conversation.channelThreadId || '';
+    } else if (conversation.channel === ChannelType.INSTAGRAM) {
+      recipientIdentifier =
+        conversation.channelThreadId || conversation.contact.instagramHandle || '';
+    } else {
+      recipientIdentifier =
+        conversation.channelThreadId ||
+        conversation.contact.primaryPhone ||
+        conversation.contact.primaryEmail ||
+        '';
     }
 
     if (!recipientIdentifier) {

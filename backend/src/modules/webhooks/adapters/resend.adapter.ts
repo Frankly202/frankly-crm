@@ -9,6 +9,8 @@ import {
 } from './channel-adapter.interface.js';
 import { normalizeEmail } from '../../../common/utils/identifier.util.js';
 import { env } from '../../../config/env.js';
+import { BadGatewayError } from '../../../common/errors/app-error.js';
+import { logger } from '../../../common/utils/logger.js';
 
 interface ResendEmailPayload {
   type?: string;
@@ -38,6 +40,17 @@ export class ResendEmailAdapter implements ChannelAdapter {
         return false;
       }
 
+      // Replay protection: enforce Svix 5-minute tolerance
+      const timestampSec = parseInt(svixTimestamp, 10);
+      if (isNaN(timestampSec)) {
+        return false;
+      }
+      const nowSec = Math.floor(Date.now() / 1000);
+      const toleranceSec = 5 * 60; // 5 minutes
+      if (Math.abs(nowSec - timestampSec) > toleranceSec) {
+        return false;
+      }
+
       const rawBody = req.rawBody;
       if (!rawBody) {
         return false;
@@ -60,7 +73,12 @@ export class ResendEmailAdapter implements ChannelAdapter {
 
       const matched = passedSignatures.some((sig) => {
         try {
-          return crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expectedSignature));
+          const sigBuf = Buffer.from(sig);
+          const expBuf = Buffer.from(expectedSignature);
+          if (sigBuf.length !== expBuf.length) {
+            return false;
+          }
+          return crypto.timingSafeEqual(sigBuf, expBuf);
         } catch {
           return false;
         }
@@ -69,8 +87,8 @@ export class ResendEmailAdapter implements ChannelAdapter {
       return matched;
     }
 
-    // Fail closed in production if secret is not configured
-    if (env.NODE_ENV === 'production') {
+    // Fail closed in production or when live mode is active if secret is not configured
+    if (env.NODE_ENV === 'production' || env.PROVIDER_MODE === 'live') {
       return false;
     }
 
@@ -100,7 +118,10 @@ export class ResendEmailAdapter implements ChannelAdapter {
     let body = data.data.text || '';
     if (!body && data.data.html) {
       // Strip HTML tags for clean text view
-      body = data.data.html.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+      body = data.data.html
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
     }
     if (!body && data.data.subject) {
       body = `[Subject: ${data.data.subject}]`;
@@ -123,17 +144,86 @@ export class ResendEmailAdapter implements ChannelAdapter {
   }
 
   async sendOutboundMessage(params: OutboundMessageParams): Promise<OutboundDeliveryResult> {
-    const externalMessageId = `resend_out_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
-    return {
-      success: true,
-      externalMessageId,
-      timestamp: new Date(),
-      details: {
-        channel: this.channel,
-        recipient: params.recipientIdentifier,
-        simulated: true,
-      },
-    };
+    if (env.PROVIDER_MODE === 'mock') {
+      const externalMessageId = `resend_out_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
+      return {
+        success: true,
+        externalMessageId,
+        timestamp: new Date(),
+        details: {
+          channel: this.channel,
+          recipient: params.recipientIdentifier,
+          simulated: true,
+        },
+      };
+    }
+
+    // Fail closed in live mode: credentials and from address must be configured
+    const apiKey = env.RESEND_API_KEY?.trim();
+    const fromAddress = env.EMAIL_FROM_ADDRESS?.trim();
+    const replyTo = env.EMAIL_REPLY_TO?.trim();
+
+    if (!apiKey || !fromAddress) {
+      throw new BadGatewayError(
+        'Resend provider is not configured or missing required credentials in live mode',
+      );
+    }
+
+    const recipientEmail = params.recipientIdentifier.trim();
+    if (!recipientEmail) {
+      throw new BadGatewayError('Invalid recipient email address');
+    }
+
+    const url = 'https://api.resend.com/emails';
+
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          from: fromAddress,
+          to: [recipientEmail],
+          reply_to: replyTo || undefined,
+          subject: (params.metadata?.['subject'] as string) || 'FranklyEdu Global CRM',
+          text: params.body,
+        }),
+      });
+
+      const responseBody = (await response.json().catch(() => ({}))) as {
+        id?: string;
+        message?: string;
+        name?: string;
+      };
+
+      if (!response.ok || !responseBody.id) {
+        const errorMsg = responseBody.message || response.statusText || 'Resend API error';
+        logger.error(`Resend email delivery failed: ${errorMsg} (status ${response.status})`);
+        throw new BadGatewayError(`Resend delivery failed: ${errorMsg}`, {
+          status: response.status,
+        });
+      }
+
+      return {
+        success: true,
+        externalMessageId: responseBody.id,
+        timestamp: new Date(),
+        details: {
+          channel: this.channel,
+          recipient: recipientEmail,
+          simulated: false,
+        },
+      };
+    } catch (err) {
+      if (err instanceof BadGatewayError) {
+        throw err;
+      }
+      const message = err instanceof Error ? err.message : 'Network error';
+      logger.error(`Network error communicating with Resend API: ${message}`);
+      throw new BadGatewayError(`Resend API network failure: ${message}`);
+    }
   }
 }
 

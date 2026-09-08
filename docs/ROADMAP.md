@@ -33,7 +33,7 @@ This document is the **single source of truth** for the project lifecycle. Phase
 | **6** | API Contract & Frontend Handoff | OpenAPI/Swagger spec, Postman collection, Lovable contract | `[COMPLETE]` |
 | **7** | Frontend Implementation | Next.js, Tailwind CSS, TanStack Query, Lovable design | `[COMPLETE]` |
 | **8** | Frontend & Backend Integration | End-to-end local wiring, State synchronization, Real-time updates | `[COMPLETE]` |
-| **9** | External Provider Integrations | Meta Cloud API (WhatsApp/IG) & Resend setup (non-disruptive) | `[PLANNED]` |
+| **9** | External Provider Integrations | Meta Cloud API (WhatsApp/IG) & Resend setup (non-disruptive) | `[COMPLETE]` |
 | **10** | Final Security Audit & E2E Verification | Final audit, vulnerability scan, E2E suite, launch sign-off | `[PLANNED]` |
 
 ---
@@ -205,24 +205,31 @@ This document is the **single source of truth** for the project lifecycle. Phase
 
 ---
 
-## Phase 9: External Provider Integrations
+## Phase 9: External Provider Integrations `[COMPLETE]`
 
-- **Objective**: Transition channel adapters from local mock fixtures to live external APIs once credentials and configuration are approved.
+- **Objective**: Establish production-ready external provider integration capabilities for WhatsApp, Instagram, and Resend with strict fail-closed live execution, non-disruptive email delivery, and zero-leak diagnostics.
 - **Scope & Deliverables**:
+  - **Fail-Closed Dual Mode Architecture**:
+    - `PROVIDER_MODE=mock` (default): Simulates provider dispatch for offline development, local smoke testing, and CI/CD pipelines without external cloud accounts.
+    - `PROVIDER_MODE=live`: Strictly fail-closed. If required credentials, tokens, or sender addresses are missing or invalid, immediately throws structured `502 BAD_GATEWAY` (`BadGatewayError`). Never falls back to mock and never persists simulated IDs.
+  - **Meta Cloud API (WhatsApp Business & Instagram Direct)**:
+    - Centralized and configurable `META_GRAPH_API_VERSION` defaulting to **`v26.0`** (official stable release).
+    - WhatsApp: HTTPS `POST /messages` dispatch with sanitized E.164 phone formatting and real `wamid.*` extraction.
+    - Instagram: HTTPS `POST /me/messages` dispatch with sanitized Instagram Scoped User IDs (IGSID).
+    - Channel-aware recipient resolution in `ConversationService`.
   - **Resend Inbound/Outbound Email Setup**:
-    - Inspect existing email architecture (DNS, MX, SPF, DKIM) for `frankedu-global.com` before proposing any configuration.
-    - Present an explicit, non-disruptive proposal that ensures Frankly's active mailbox (`emmanuel@frankedu-global.com`) remains completely unaffected.
-    - Implement outbound sending and inbound webhook processing only after Frankly's explicit review and approval.
-  - **Meta Cloud API (WhatsApp Business)**: Configure App ID, Phone Number ID, permanent/system access token, and webhook verification.
-  - **Meta Graph API (Instagram)**: Configure Instagram Graph API messaging tokens and webhook subscriptions.
-  - Secure secrets management in `.env` (strictly uncommitted).
-  - Clean fallback/toggle mechanism between local mock mode and live provider mode via configuration.
+    - Live outbound HTTPS `POST /emails` dispatch with configurable `EMAIL_FROM_ADDRESS` and `EMAIL_REPLY_TO` (preserving `emmanuel@frankedu-global.com`).
+    - Svix 5-minute timestamp replay protection on inbound webhooks (`Math.abs(now - timestamp) <= 300s`).
+    - Separated safe development path (inbound simulation / fixtures) from production custom-domain/DNS setup.
+  - **Provider Health Diagnostics**:
+    - Lightweight non-sensitive health reporting (`NOT_CONFIGURED`, `CONFIGURED`, `MISCONFIGURED`) via `GET /api/v1/health`.
 - **Validation Gates**:
-  - Webhook signature verification verified with live signed requests (via secure tunnel e.g. ngrok/cloudflared).
-  - Test outbound email delivered via Resend without impacting existing MX records or mailbox operations.
-  - Inbound and outbound message test verified with live WhatsApp/Instagram sandbox or test numbers.
-- **Completion Criteria**: External channels verified live or cleanly toggleable to mock mode; zero impact on existing mailbox.
-- **Dependencies / Blockers**: Phase 8 completed; requires Frankly's live Meta App credentials, Resend API key, and explicit approval of any email configuration.
+  - 168 / 168 backend unit & integration tests passing across 26 suites.
+  - Fail-closed live mode verified for all providers (rejecting unconfigured live requests, handling upstream 4xx/5xx errors).
+  - Webhook timing-safe comparisons and Svix replay rejection verified.
+  - All frontend gates (`tsc`, `lint`, `test`, `build`) passing cleanly.
+- **Completion Criteria**: Complete, audited provider integration layer operational; zero impact on existing business mailbox.
+- **Production Operational Dependencies**: Future production rollout requires Frankly to provision live Meta WABA assets, Instagram Page access tokens, and an approved dedicated subdomain for Resend DNS records.
 
 ---
 

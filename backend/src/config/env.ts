@@ -20,6 +20,21 @@ const envSchema = z.object({
   META_VERIFY_TOKEN: z.string().optional(),
   META_APP_SECRET: z.string().optional(),
   RESEND_WEBHOOK_SECRET: z.string().optional(),
+
+  // Provider Mode & Integration Settings
+  PROVIDER_MODE: z.enum(['mock', 'live']).default('mock'),
+  META_GRAPH_API_VERSION: z
+    .string()
+    .regex(/^v[0-9]+(\.[0-9]+)?$/)
+    .default('v26.0'),
+  META_APP_ID: z.string().optional(),
+  WHATSAPP_PHONE_NUMBER_ID: z.string().optional(),
+  WHATSAPP_ACCESS_TOKEN: z.string().optional(),
+  INSTAGRAM_PAGE_ID: z.string().optional(),
+  INSTAGRAM_ACCESS_TOKEN: z.string().optional(),
+  RESEND_API_KEY: z.string().optional(),
+  EMAIL_FROM_ADDRESS: z.string().optional(),
+  EMAIL_REPLY_TO: z.string().optional(),
 });
 
 export type Env = z.infer<typeof envSchema>;

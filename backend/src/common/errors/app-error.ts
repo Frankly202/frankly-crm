@@ -51,3 +51,9 @@ export class ConflictError extends AppError {
     super(message, 409, 'CONFLICT', details);
   }
 }
+
+export class BadGatewayError extends AppError {
+  constructor(message = 'Upstream provider error', details?: unknown) {
+    super(message, 502, 'BAD_GATEWAY', details);
+  }
+}
