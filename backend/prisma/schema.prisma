@@ -43,6 +43,7 @@ enum MessageDirection {
 }
 
 enum MessageStatus {
+  PENDING
   RECEIVED
   SENT
   DELIVERED
@@ -164,6 +165,11 @@ model Message {
   senderIdentifier    String
   recipientIdentifier String
   externalMessageId   String?          @unique
+  idempotencyKey      String?          @unique
+  subject             String?
+  rfcMessageId        String?          @unique
+  inReplyTo           String?
+  references          String?
   rawPayload          Json?
   createdAt           DateTime         @default(now())
 

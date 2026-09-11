@@ -13,6 +13,8 @@ import type {
   LeadStatus,
   Message,
   PaginationMeta,
+  StartEmailConversationInput,
+  StartEmailConversationResponse,
 } from "./types";
 
 export const queryKeys = {
@@ -206,16 +208,39 @@ export const useConversation = (id: string | null) =>
 export const useSendMessage = (id: string) => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (body: string) =>
-      (
+    mutationFn: async (input: string | { body: string; subject?: string }) => {
+      const body = typeof input === "string" ? { body: input } : input;
+      return (
         await apiRequest<Message>(`/conversations/${id}/messages`, {
           method: "POST",
-          body: { body },
+          body,
         })
-      ).data,
+      ).data;
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: queryKeys.conversations.detail(id) });
       qc.invalidateQueries({ queryKey: queryKeys.conversations.all });
+    },
+  });
+};
+
+export const useStartEmailConversation = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: StartEmailConversationInput) =>
+      (
+        await apiRequest<StartEmailConversationResponse>("/conversations/start-email", {
+          method: "POST",
+          body: input as unknown as Record<string, unknown>,
+        })
+      ).data,
+    onSuccess: (data) => {
+      qc.invalidateQueries({ queryKey: queryKeys.conversations.all });
+      qc.invalidateQueries({ queryKey: queryKeys.contacts.all });
+      qc.invalidateQueries({ queryKey: queryKeys.leads.all });
+      if (data?.conversationId) {
+        qc.invalidateQueries({ queryKey: queryKeys.conversations.detail(data.conversationId) });
+      }
     },
   });
 };

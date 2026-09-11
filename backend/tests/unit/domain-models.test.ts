@@ -40,7 +40,7 @@ describe('Domain Models & Enums Specification', () => {
   it('should support message directions and delivery statuses', () => {
     expect(Object.keys(MessageDirection).sort()).toEqual(['INBOUND', 'OUTBOUND'].sort());
     expect(Object.keys(MessageStatus).sort()).toEqual(
-      ['RECEIVED', 'SENT', 'DELIVERED', 'FAILED'].sort(),
+      ['PENDING', 'RECEIVED', 'SENT', 'DELIVERED', 'FAILED'].sort(),
     );
   });
 

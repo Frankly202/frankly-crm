@@ -273,6 +273,102 @@ describe('Channel Adapters Unit Tests', () => {
       fetchSpy.mockRestore();
       vi.unstubAllEnvs();
     });
+
+    it('should extract RFC headers (Message-ID, In-Reply-To, References) case-insensitively and sanitize CR/LF', async () => {
+      const payload = {
+        type: 'email.received',
+        data: {
+          email_id: 'email_rfc_headers_id',
+          from: 'Sender <sender@example.com>',
+          to: ['emmanuel@frankedu-global.com'],
+          subject: 'Threaded inquiry\r\nBcc: evil@attacker.com',
+        },
+      };
+
+      vi.stubEnv('RESEND_API_KEY', 're_test_dummy_key_123');
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: 'email_rfc_headers_id',
+          text: 'Inquiry body',
+          subject: 'Threaded inquiry\r\nBcc: evil@attacker.com',
+          headers: {
+            'Message-Id': '<message-123@example.com>\r\n',
+            'in-reply-to': ['<parent-456@example.com>'],
+            REFERENCES: '<root-001@example.com> <parent-456@example.com>',
+          },
+        }),
+      } as unknown as Response);
+
+      const messages = await resendEmailAdapter.normalizeInboundPayload(payload);
+      expect(messages.length).toBe(1);
+      const msg = messages[0];
+      expect(msg?.subject).toBe('Threaded inquiry Bcc: evil@attacker.com');
+      expect(msg?.rfcMessageId).toBe('<message-123@example.com>');
+      expect(msg?.inReplyTo).toBe('<parent-456@example.com>');
+      expect(msg?.references).toBe('<root-001@example.com> <parent-456@example.com>');
+
+      fetchSpy.mockRestore();
+      vi.unstubAllEnvs();
+    });
+
+    it('should pass Idempotency-Key and threading headers when dispatching outbound email in live mode', async () => {
+      const origProviderMode = env.PROVIDER_MODE;
+      const origApiKey = env.RESEND_API_KEY;
+      const origFrom = env.EMAIL_FROM_ADDRESS;
+      const origReplyTo = env.EMAIL_REPLY_TO;
+
+      env.PROVIDER_MODE = 'live' as unknown as typeof env.PROVIDER_MODE;
+      env.RESEND_API_KEY = 're_test_key_live_123';
+      env.EMAIL_FROM_ADDRESS = 'Frankly CRM <emmanuel@frankedu-global.com>';
+      env.EMAIL_REPLY_TO = 'frankly@huejoraata.resend.app';
+
+      vi.stubEnv('PROVIDER_MODE', 'live');
+      vi.stubEnv('RESEND_API_KEY', 're_test_key_live_123');
+      vi.stubEnv('EMAIL_FROM_ADDRESS', 'Frankly CRM <emmanuel@frankedu-global.com>');
+      vi.stubEnv('EMAIL_REPLY_TO', 'frankly@huejoraata.resend.app');
+
+      let interceptedHeaders: Record<string, string> = {};
+      let interceptedBody: Record<string, unknown> = {};
+
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementationOnce(async (url, init) => {
+        interceptedHeaders = (init?.headers || {}) as Record<string, string>;
+        interceptedBody = JSON.parse(init?.body as string);
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ id: 'resend_live_msg_987' }),
+        } as unknown as Response;
+      });
+
+      const result = await resendEmailAdapter.sendOutboundMessage({
+        conversationId: 'conv-123',
+        recipientIdentifier: 'customer@example.com',
+        body: 'Thank you for contacting Frankly.',
+        subject: 'Re: Inquiry\r\nX-Injected: Bad',
+        inReplyTo: '<parent-msg@example.com>\r\n',
+        references: '<root-msg@example.com> <parent-msg@example.com>',
+        idempotencyKey: 'idem_custom_key_456',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.externalMessageId).toBe('resend_live_msg_987');
+      expect(interceptedHeaders['Idempotency-Key']).toBe('idem_custom_key_456');
+      expect(interceptedHeaders['Authorization']).toBe('Bearer re_test_key_live_123');
+      expect(interceptedBody['subject']).toBe('Re: Inquiry X-Injected: Bad');
+      expect(interceptedBody['headers']).toEqual({
+        'In-Reply-To': '<parent-msg@example.com>',
+        'References': '<root-msg@example.com> <parent-msg@example.com>',
+      });
+
+      fetchSpy.mockRestore();
+      env.PROVIDER_MODE = origProviderMode;
+      env.RESEND_API_KEY = origApiKey;
+      env.EMAIL_FROM_ADDRESS = origFrom;
+      env.EMAIL_REPLY_TO = origReplyTo;
+      vi.unstubAllEnvs();
+    });
   });
 
   describe('WebsiteFormAdapter', () => {

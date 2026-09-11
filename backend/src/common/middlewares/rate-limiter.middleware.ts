@@ -43,3 +43,19 @@ export const refreshRateLimiter = rateLimit({
   },
 });
 
+export const outboundEmailRateLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: env.NODE_ENV === 'test' ? 10000 : env.OUTBOUND_EMAIL_RATE_LIMIT_PER_HOUR,
+  standardHeaders: true,
+  legacyHeaders: false,
+  validate: { keyGeneratorIpFallback: false },
+  keyGenerator: (req) => (req as { user?: { id?: string }; ip?: string }).user?.id || req.ip || 'anonymous',
+  message: {
+    success: false,
+    error: {
+      code: 'TOO_MANY_REQUESTS',
+      message: 'Outbound email rate limit exceeded. Please try again later.',
+    },
+  },
+});
+

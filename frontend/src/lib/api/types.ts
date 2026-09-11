@@ -21,7 +21,7 @@ export type ActivityType =
   | "NEXT_ACTION_SET";
 
 export type MessageDirection = "INBOUND" | "OUTBOUND";
-export type MessageStatus = "RECEIVED" | "SENT" | "DELIVERED" | "FAILED";
+export type MessageStatus = "PENDING" | "RECEIVED" | "SENT" | "DELIVERED" | "FAILED";
 
 export interface PaginationMeta {
   total: number;
@@ -111,7 +111,28 @@ export interface Message {
   direction: MessageDirection;
   status: MessageStatus;
   body: string;
+  subject?: string | null;
+  rfcMessageId?: string | null;
+  inReplyTo?: string | null;
+  references?: string | null;
   createdAt: string;
+}
+
+export interface StartEmailConversationInput {
+  to: string;
+  recipientName?: string | undefined;
+  subject: string;
+  body: string;
+  leadCategory?: LeadCategory | undefined;
+  idempotencyKey?: string | undefined;
+}
+
+export interface StartEmailConversationResponse {
+  conversationId: string;
+  messageId: string;
+  status: MessageStatus;
+  externalMessageId?: string;
+  deduplicated?: boolean;
 }
 
 export interface Conversation {

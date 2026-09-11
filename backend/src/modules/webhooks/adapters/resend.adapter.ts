@@ -22,6 +22,27 @@ const resendReceivingEmailSchema = z.object({
   headers: z.record(z.unknown()).optional(),
 });
 
+function getHeaderValue(headers: Record<string, unknown> | undefined, name: string): string | undefined {
+  if (!headers) return undefined;
+  const target = name.toLowerCase();
+  for (const [key, val] of Object.entries(headers)) {
+    if (key.toLowerCase() === target) {
+      if (Array.isArray(val)) {
+        return val.map((v) => String(v).trim()).filter(Boolean).join(' ') || undefined;
+      }
+      if (typeof val === 'string') {
+        return val.trim() || undefined;
+      }
+    }
+  }
+  return undefined;
+}
+
+function sanitizeHeader(val: string | undefined): string | undefined {
+  if (!val) return undefined;
+  return val.replace(/[\r\n]+/g, ' ').trim();
+}
+
 interface ResendEmailPayload {
   type?: string;
   created_at?: string;
@@ -121,7 +142,12 @@ export class ResendEmailAdapter implements ChannelAdapter {
    */
   async fetchReceivedEmailContent(
     emailId: string,
-  ): Promise<{ text?: string | null; html?: string | null } | null> {
+  ): Promise<{
+    text?: string | null;
+    html?: string | null;
+    subject?: string | null;
+    headers?: Record<string, unknown>;
+  } | null> {
     const apiKey = env.RESEND_API_KEY?.trim() || process.env['RESEND_API_KEY']?.trim();
     if (!apiKey) {
       return null;
@@ -160,6 +186,8 @@ export class ResendEmailAdapter implements ChannelAdapter {
       return {
         text: parseResult.data.text ?? null,
         html: parseResult.data.html ?? null,
+        subject: parseResult.data.subject ?? null,
+        headers: parseResult.data.headers,
       };
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
@@ -192,15 +220,27 @@ export class ResendEmailAdapter implements ChannelAdapter {
 
     let body = data.data.text?.trim() || '';
     let html = data.data.html?.trim() || '';
+    let subject = data.data.subject?.trim() || undefined;
+    let rfcMessageId: string | undefined;
+    let inReplyTo: string | undefined;
+    let references: string | undefined;
 
-    // When body is missing from webhook metadata, fetch full content from Resend Receiving API
-    if (!body && !html && data.data.email_id) {
+    if (data.data.email_id) {
       const remoteContent = await this.fetchReceivedEmailContent(data.data.email_id);
       if (remoteContent) {
-        if (remoteContent.text?.trim()) {
+        if (!body && remoteContent.text?.trim()) {
           body = remoteContent.text.trim();
-        } else if (remoteContent.html?.trim()) {
+        }
+        if (!html && remoteContent.html?.trim()) {
           html = remoteContent.html.trim();
+        }
+        if (remoteContent.subject?.trim()) {
+          subject = remoteContent.subject.trim();
+        }
+        if (remoteContent.headers) {
+          rfcMessageId = getHeaderValue(remoteContent.headers, 'message-id');
+          inReplyTo = getHeaderValue(remoteContent.headers, 'in-reply-to');
+          references = getHeaderValue(remoteContent.headers, 'references');
         }
       }
     }
@@ -212,8 +252,8 @@ export class ResendEmailAdapter implements ChannelAdapter {
         .replace(/\s+/g, ' ')
         .trim();
     }
-    if (!body && data.data.subject) {
-      body = `[Subject: ${data.data.subject}]`;
+    if (!body && subject) {
+      body = `[Subject: ${subject}]`;
     }
 
     const timestamp = data.created_at ? new Date(data.created_at) : new Date();
@@ -226,6 +266,10 @@ export class ResendEmailAdapter implements ChannelAdapter {
         senderName,
         recipientIdentifier,
         body,
+        subject: sanitizeHeader(subject),
+        rfcMessageId: sanitizeHeader(rfcMessageId),
+        inReplyTo: sanitizeHeader(inReplyTo),
+        references: sanitizeHeader(references),
         rawPayload: data as unknown as Record<string, unknown>,
         timestamp,
       },
@@ -233,6 +277,12 @@ export class ResendEmailAdapter implements ChannelAdapter {
   }
 
   async sendOutboundMessage(params: OutboundMessageParams): Promise<OutboundDeliveryResult> {
+    const sanitizedSubject = sanitizeHeader(
+      params.subject || (params.metadata?.['subject'] as string) || 'FranklyEdu Global CRM',
+    );
+    const sanitizedInReplyTo = sanitizeHeader(params.inReplyTo);
+    const sanitizedReferences = sanitizeHeader(params.references);
+
     if (env.PROVIDER_MODE === 'mock') {
       const externalMessageId = `resend_out_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
       return {
@@ -243,6 +293,10 @@ export class ResendEmailAdapter implements ChannelAdapter {
           channel: this.channel,
           recipient: params.recipientIdentifier,
           simulated: true,
+          subject: sanitizedSubject,
+          idempotencyKey: params.idempotencyKey,
+          inReplyTo: sanitizedInReplyTo,
+          references: sanitizedReferences,
         },
       };
     }
@@ -266,19 +320,38 @@ export class ResendEmailAdapter implements ChannelAdapter {
     const url = 'https://api.resend.com/emails';
 
     try {
+      const reqHeaders: Record<string, string> = {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      };
+      if (params.idempotencyKey) {
+        reqHeaders['Idempotency-Key'] = params.idempotencyKey;
+      }
+
+      const customEmailHeaders: Record<string, string> = {};
+      if (sanitizedInReplyTo) {
+        customEmailHeaders['In-Reply-To'] = sanitizedInReplyTo;
+      }
+      if (sanitizedReferences) {
+        customEmailHeaders['References'] = sanitizedReferences;
+      }
+
+      const requestPayload: Record<string, unknown> = {
+        from: fromAddress,
+        to: [recipientEmail],
+        reply_to: replyTo || undefined,
+        subject: sanitizedSubject,
+        text: params.body,
+      };
+
+      if (Object.keys(customEmailHeaders).length > 0) {
+        requestPayload['headers'] = customEmailHeaders;
+      }
+
       const response = await fetch(url, {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          from: fromAddress,
-          to: [recipientEmail],
-          reply_to: replyTo || undefined,
-          subject: (params.metadata?.['subject'] as string) || 'FranklyEdu Global CRM',
-          text: params.body,
-        }),
+        headers: reqHeaders,
+        body: JSON.stringify(requestPayload),
       });
 
       const responseBody = (await response.json().catch(() => ({}))) as {

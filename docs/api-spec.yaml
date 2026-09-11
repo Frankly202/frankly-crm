@@ -1129,6 +1129,7 @@ components:
     MessageStatus:
       type: string
       enum:
+        - PENDING
         - RECEIVED
         - SENT
         - DELIVERED

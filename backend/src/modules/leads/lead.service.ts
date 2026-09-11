@@ -503,63 +503,49 @@ export class LeadService {
     );
     const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
 
-    const [
-      totalLeads,
-      totalContacts,
-      statusGroups,
-      categoryGroups,
-      totalPendingNextActions,
-      overdueNextActions,
-      dueTodayNextActions,
-      upcomingNextActions,
-      noDueDateNextActions,
-      leadsCreatedToday,
-      leadsCreatedThisWeek,
-    ] = await Promise.all([
-      prisma.lead.count(),
-      prisma.contact.count(),
-      prisma.lead.groupBy({
-        by: ['status'],
-        _count: { _all: true },
-      }),
-      prisma.lead.groupBy({
-        by: ['category'],
-        _count: { _all: true },
-      }),
-      prisma.lead.count({
-        where: { nextActionRequired: { not: null } },
-      }),
-      prisma.lead.count({
-        where: {
-          nextActionRequired: { not: null },
-          nextActionDueDate: { lt: startOfToday },
-        },
-      }),
-      prisma.lead.count({
-        where: {
-          nextActionRequired: { not: null },
-          nextActionDueDate: { gte: startOfToday, lte: endOfToday },
-        },
-      }),
-      prisma.lead.count({
-        where: {
-          nextActionRequired: { not: null },
-          nextActionDueDate: { gt: endOfToday },
-        },
-      }),
-      prisma.lead.count({
-        where: {
-          nextActionRequired: { not: null },
-          nextActionDueDate: null,
-        },
-      }),
-      prisma.lead.count({
-        where: { createdAt: { gte: startOfToday } },
-      }),
-      prisma.lead.count({
-        where: { createdAt: { gte: sevenDaysAgo } },
-      }),
-    ]);
+    const totalLeads = await prisma.lead.count();
+    const totalContacts = await prisma.contact.count();
+    const statusGroups = await prisma.lead.groupBy({
+      by: ['status'],
+      _count: { _all: true },
+    });
+    const categoryGroups = await prisma.lead.groupBy({
+      by: ['category'],
+      _count: { _all: true },
+    });
+    const totalPendingNextActions = await prisma.lead.count({
+      where: { nextActionRequired: { not: null } },
+    });
+    const overdueNextActions = await prisma.lead.count({
+      where: {
+        nextActionRequired: { not: null },
+        nextActionDueDate: { lt: startOfToday },
+      },
+    });
+    const dueTodayNextActions = await prisma.lead.count({
+      where: {
+        nextActionRequired: { not: null },
+        nextActionDueDate: { gte: startOfToday, lte: endOfToday },
+      },
+    });
+    const upcomingNextActions = await prisma.lead.count({
+      where: {
+        nextActionRequired: { not: null },
+        nextActionDueDate: { gt: endOfToday },
+      },
+    });
+    const noDueDateNextActions = await prisma.lead.count({
+      where: {
+        nextActionRequired: { not: null },
+        nextActionDueDate: null,
+      },
+    });
+    const leadsCreatedToday = await prisma.lead.count({
+      where: { createdAt: { gte: startOfToday } },
+    });
+    const leadsCreatedThisWeek = await prisma.lead.count({
+      where: { createdAt: { gte: sevenDaysAgo } },
+    });
 
     // Initialize all enum keys with 0
     const byStatus: Record<LeadStatus, number> = {

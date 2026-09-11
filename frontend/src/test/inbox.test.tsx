@@ -160,6 +160,10 @@ vi.mock("@/lib/api/queries", () => ({
     mutate: mockMutateMarkRead,
     isPending: false,
   }),
+  useStartEmailConversation: () => ({
+    mutateAsync: vi.fn(),
+    isPending: false,
+  }),
 }));
 
 import { Route } from "@/routes/inbox";

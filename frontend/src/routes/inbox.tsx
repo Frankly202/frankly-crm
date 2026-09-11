@@ -17,6 +17,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AppShell } from "@/components/layout/AppShell";
 import { CategoryBadge, ChannelBadge, StatusBadge } from "@/components/crm/badges";
+import { ComposeEmailDialog } from "@/components/crm/ComposeEmailDialog";
 import { EmptyState, ErrorState, RowSkeleton } from "@/components/crm/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -177,6 +178,7 @@ function InboxPage() {
               {unreadCount} unread thread{unreadCount === 1 ? "" : "s"}
             </Badge>
           )}
+          <ComposeEmailDialog />
         </div>
       }
     >
@@ -384,6 +386,12 @@ function InboxPage() {
                       </h2>
                       <ChannelBadge channel={convDetail.channel} />
                     </div>
+                    {convDetail.channel === "RESEND_EMAIL" &&
+                      convDetail.messages?.find((m) => m.subject)?.subject && (
+                        <div className="truncate text-xs font-semibold text-foreground/80">
+                          Subject: {convDetail.messages.find((m) => m.subject)?.subject}
+                        </div>
+                      )}
                     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                       <span>Thread: {convDetail.channelThreadId}</span>
                       {convDetail.contactId && (
@@ -469,6 +477,18 @@ function InboxPage() {
                                   : "rounded-br-none bg-primary text-primary-foreground",
                               )}
                             >
+                              {msg.subject && (
+                                <div
+                                  className={cn(
+                                    "mb-1.5 border-b pb-1 text-xs font-semibold",
+                                    isInbound
+                                      ? "border-border/60 text-foreground/80"
+                                      : "border-primary-foreground/20 text-primary-foreground/90",
+                                  )}
+                                >
+                                  {msg.subject}
+                                </div>
+                              )}
                               <p className="whitespace-pre-wrap break-words leading-relaxed">
                                 {msg.body}
                               </p>
@@ -488,6 +508,9 @@ function InboxPage() {
                             {!isInbound && (
                               <span className="inline-flex items-center gap-0.5 font-medium">
                                 &middot;
+                                {msg.status === "PENDING" && (
+                                  <Clock className="h-3 w-3 animate-pulse text-amber-500" />
+                                )}
                                 {msg.status === "SENT" && <Check className="h-3 w-3" />}
                                 {msg.status === "DELIVERED" && <CheckCheck className="h-3 w-3" />}
                                 {msg.status === "FAILED" && (

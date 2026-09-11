@@ -66,6 +66,22 @@ export class ConversationController {
       next(error);
     }
   }
+
+  async startEmailConversation(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const result = await conversationService.startEmailConversation(
+        req.body,
+        req.user,
+      );
+      const response: ApiResponse = {
+        success: true,
+        data: result,
+      };
+      res.status(201).json(response);
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export const conversationController = new ConversationController();

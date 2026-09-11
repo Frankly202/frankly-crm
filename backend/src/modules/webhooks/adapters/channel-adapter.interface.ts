@@ -8,6 +8,10 @@ export interface NormalizedInboundMessage {
   senderName?: string;
   recipientIdentifier: string;
   body: string;
+  subject?: string;
+  rfcMessageId?: string;
+  inReplyTo?: string;
+  references?: string;
   rawPayload: Record<string, unknown>;
   timestamp: Date;
   suggestedCategory?: LeadCategory;
@@ -17,6 +21,10 @@ export interface OutboundMessageParams {
   conversationId: string;
   recipientIdentifier: string;
   body: string;
+  subject?: string;
+  inReplyTo?: string;
+  references?: string;
+  idempotencyKey?: string;
   senderIdentifier?: string;
   metadata?: Record<string, unknown>;
 }

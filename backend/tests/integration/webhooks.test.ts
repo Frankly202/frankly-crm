@@ -218,6 +218,11 @@ describe('Webhooks & Inbound Channel Ingestion Integration', () => {
           text: 'This body was fetched from the Resend Receiving API.',
           html: '<p>This body was fetched from the Resend Receiving API.</p>',
           subject: 'Receiving API Integration Test',
+          headers: {
+            'Message-ID': '<inbound-rfc-001@example.com>',
+            'In-Reply-To': '<prior-parent@example.com>',
+            'References': '<root-000@example.com>',
+          },
         }),
       } as unknown as Response);
 
@@ -236,6 +241,10 @@ describe('Webhooks & Inbound Channel Ingestion Integration', () => {
         expect(message).toBeDefined();
         expect(message?.body).toBe('This body was fetched from the Resend Receiving API.');
         expect(message?.senderIdentifier).toBe('metadata.client@example.com');
+        expect(message?.subject).toBe('Receiving API Integration Test');
+        expect(message?.rfcMessageId).toBe('<inbound-rfc-001@example.com>');
+        expect(message?.inReplyTo).toBe('<prior-parent@example.com>');
+        expect(message?.references).toBe('<root-000@example.com>');
       } finally {
         globalThis.fetch = originalFetch;
       }

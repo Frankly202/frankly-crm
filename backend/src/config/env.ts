@@ -45,6 +45,7 @@ export const envSchema = z
     RESEND_API_KEY: z.string().optional(),
     EMAIL_FROM_ADDRESS: z.string().optional(),
     EMAIL_REPLY_TO: z.string().optional(),
+    OUTBOUND_EMAIL_RATE_LIMIT_PER_HOUR: z.coerce.number().int().positive().default(30),
   })
   .superRefine((data, ctx) => {
     if (data.NODE_ENV === 'production') {
