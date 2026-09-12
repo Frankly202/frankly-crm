@@ -358,6 +358,87 @@ describe('Webhooks & Inbound Channel Ingestion Integration', () => {
     });
   });
 
+  describe('Concurrent Webhook Delivery & Idempotency Safety (Phase 2)', () => {
+    it('should safely handle concurrent identical webhook deliveries without 500 errors', async () => {
+      const concurrentExternalId = `wamid.CONCURRENT_${Date.now()}`;
+      const concurrentPayload = {
+        object: 'whatsapp_business_account',
+        entry: [
+          {
+            id: 'WHATSAPP_BUSINESS_ACCOUNT_ID',
+            changes: [
+              {
+                value: {
+                  messaging_product: 'whatsapp',
+                  metadata: {
+                    display_phone_number: '35722000000',
+                    phone_number_id: 'PHONE_NUMBER_ID',
+                  },
+                  contacts: [
+                    {
+                      profile: { name: 'Concurrent Test Client' },
+                      wa_id: '35799887766',
+                    },
+                  ],
+                  messages: [
+                    {
+                      from: '35799887766',
+                      id: concurrentExternalId,
+                      timestamp: '1725900000',
+                      text: { body: 'Testing concurrent delivery safety' },
+                      type: 'text',
+                    },
+                  ],
+                },
+                field: 'messages',
+              },
+            ],
+          },
+        ],
+      };
+
+      // Fire 2 concurrent requests simultaneously
+      const [res1, res2] = await Promise.all([
+        request(app)
+          .post('/api/v1/webhooks/whatsapp')
+          .set('x-local-fixture-test', 'true')
+          .send(concurrentPayload),
+        request(app)
+          .post('/api/v1/webhooks/whatsapp')
+          .set('x-local-fixture-test', 'true')
+          .send(concurrentPayload),
+      ]);
+
+      // Both must succeed with 200 OK (no unhandled P2002 HTTP 500)
+      expect(res1.status).toBe(200);
+      expect(res2.status).toBe(200);
+
+      // Exactly one must have deduplicated: false and the other deduplicated: true
+      const deduplicatedFlags = [
+        res1.body.data.messages[0].deduplicated,
+        res2.body.data.messages[0].deduplicated,
+      ];
+      expect(deduplicatedFlags).toContain(false);
+      expect(deduplicatedFlags).toContain(true);
+
+      // Database message count for this external ID must be exactly 1
+      const count = await prisma.message.count({
+        where: { externalMessageId: concurrentExternalId },
+      });
+      expect(count).toBe(1);
+
+      // Cleanup
+      const contact = await prisma.contact.findUnique({
+        where: { primaryPhone: '+35799887766' },
+      });
+      if (contact) {
+        await prisma.conversation.deleteMany({ where: { contactId: contact.id } });
+        await prisma.lead.deleteMany({ where: { contactId: contact.id } });
+        await prisma.contact.delete({ where: { id: contact.id } });
+      }
+    });
+  });
+
   describe('Security & Fail-Closed Signature Verification', () => {
     it('should fail closed with 401 when signature is invalid or tampered with secret set', async () => {
       process.env['META_APP_SECRET'] = 'real_configured_secret_for_test';
