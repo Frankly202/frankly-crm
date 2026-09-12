@@ -51,6 +51,16 @@ This document provides concise operational instructions for deploying, configuri
 |---|---|
 | `VITE_API_BASE_URL` | Base URL of the backend API (e.g., `https://api.crm.frankedu-global.com/api/v1`) |
 
+### 2.3 Test Database Isolation & Fail-Closed Safety Guard (`backend/.env.test`)
+
+To strictly protect production and development databases from automated test suites and teardown scripts:
+
+- **Isolated Test Database**: Vitest integration tests run against a dedicated test database (`frankly_crm_test`) in the local Docker PostgreSQL container on port 5435.
+- **Fail-Closed Guard**: `backend/tests/setup.ts` and `backend/vitest.config.ts` enforce an early pre-flight check:
+  - If `DATABASE_URL` contains `supabase.co`, `pooler.supabase.com`, or production identifiers, Vitest aborts immediately with `FATAL_PRODUCTION_SAFETY_ERROR` before any test or database query executes.
+  - If `DATABASE_URL` does not point to an isolated database containing `_test`, test execution aborts immediately.
+- **Production & Dev Stability**: Normal development (`.env`) and production configurations remain untouched.
+
 ---
 
 ## 3. Database Deployment & Seeding

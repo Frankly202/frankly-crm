@@ -3,6 +3,19 @@ import { env } from './env.js';
 import { logger } from '../common/utils/logger.js';
 
 const prismaClientSingleton = (): PrismaClient => {
+  if (env.NODE_ENV === 'test') {
+    const url = (env.DATABASE_URL || '').toLowerCase();
+    if (
+      url.includes('supabase.co') ||
+      url.includes('pooler.supabase.com') ||
+      url.includes('sukcdaawcyxlquvtxdsi')
+    ) {
+      throw new Error(
+        'FATAL_PRODUCTION_SAFETY_ERROR: Attempted to initialize PrismaClient against Supabase while NODE_ENV=test!'
+      );
+    }
+  }
+
   return new PrismaClient({
     log:
       env.NODE_ENV === 'development'
