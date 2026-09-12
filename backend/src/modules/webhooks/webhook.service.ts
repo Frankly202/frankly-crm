@@ -123,265 +123,300 @@ export class WebhookService {
       return contact;
     }
 
-    // Create new contact with race-condition safety
-    try {
-      const contactData: Prisma.ContactCreateInput = {
-        name: inbound.senderName || inbound.senderIdentifier,
-        primaryPhone: inbound.channel === ChannelType.WHATSAPP ? inbound.senderIdentifier : null,
-        instagramHandle: inbound.channel === ChannelType.INSTAGRAM ? inbound.senderIdentifier : null,
-        primaryEmail: inbound.channel === ChannelType.RESEND_EMAIL ? inbound.senderIdentifier : null,
-      };
+    // Create new contact with race-safe atomic upsert
+    const contactData: Prisma.ContactCreateInput = {
+      name: inbound.senderName || inbound.senderIdentifier,
+      primaryPhone: inbound.channel === ChannelType.WHATSAPP ? inbound.senderIdentifier : null,
+      instagramHandle: inbound.channel === ChannelType.INSTAGRAM ? inbound.senderIdentifier : null,
+      primaryEmail: inbound.channel === ChannelType.RESEND_EMAIL ? inbound.senderIdentifier : null,
+    };
 
-      if (inbound.channel === ChannelType.WEBSITE_FORM) {
-        const raw = (inbound.rawPayload || {}) as { email?: string; phone?: string };
-        if (raw.email) {
-          contactData.primaryEmail = normalizeEmail(raw.email);
-        } else if (inbound.senderIdentifier.includes('@')) {
-          contactData.primaryEmail = inbound.senderIdentifier;
-        }
-
-        if (raw.phone) {
-          contactData.primaryPhone = normalizePhone(raw.phone);
-        } else if (!inbound.senderIdentifier.includes('@')) {
-          contactData.primaryPhone = inbound.senderIdentifier;
-        }
+    if (inbound.channel === ChannelType.WEBSITE_FORM) {
+      const raw = (inbound.rawPayload || {}) as { email?: string; phone?: string };
+      if (raw.email) {
+        contactData.primaryEmail = normalizeEmail(raw.email);
+      } else if (inbound.senderIdentifier.includes('@')) {
+        contactData.primaryEmail = inbound.senderIdentifier;
       }
 
-      contact = await tx.contact.create({
-        data: contactData,
-      });
-
-      return contact;
-    } catch (error) {
-      // P2002: Unique constraint violation in concurrent race condition
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === 'P2002'
-      ) {
-        // Re-query the contact created concurrently
-        if (inbound.channel === ChannelType.WHATSAPP) {
-          contact = await tx.contact.findUnique({ where: { primaryPhone: inbound.senderIdentifier } });
-        } else if (inbound.channel === ChannelType.INSTAGRAM) {
-          contact = await tx.contact.findUnique({ where: { instagramHandle: inbound.senderIdentifier } });
-        } else if (inbound.channel === ChannelType.RESEND_EMAIL) {
-          contact = await tx.contact.findUnique({ where: { primaryEmail: inbound.senderIdentifier } });
-        } else {
-          contact = await tx.contact.findFirst({
-            where: {
-              OR: [
-                { primaryEmail: inbound.senderIdentifier },
-                { primaryPhone: inbound.senderIdentifier },
-              ],
-            },
-          });
-        }
-        if (contact) return contact;
+      if (raw.phone) {
+        contactData.primaryPhone = normalizePhone(raw.phone);
+      } else if (!inbound.senderIdentifier.includes('@')) {
+        contactData.primaryPhone = inbound.senderIdentifier;
       }
-      throw error;
     }
+
+    if (inbound.channel === ChannelType.WHATSAPP && contactData.primaryPhone) {
+      return await tx.contact.upsert({
+        where: { primaryPhone: contactData.primaryPhone },
+        create: contactData,
+        update: {},
+      });
+    }
+
+    if (inbound.channel === ChannelType.INSTAGRAM && contactData.instagramHandle) {
+      return await tx.contact.upsert({
+        where: { instagramHandle: contactData.instagramHandle },
+        create: contactData,
+        update: {},
+      });
+    }
+
+    if (inbound.channel === ChannelType.RESEND_EMAIL && contactData.primaryEmail) {
+      return await tx.contact.upsert({
+        where: { primaryEmail: contactData.primaryEmail },
+        create: contactData,
+        update: {},
+      });
+    }
+
+    if (inbound.channel === ChannelType.WEBSITE_FORM) {
+      if (contactData.primaryEmail) {
+        return await tx.contact.upsert({
+          where: { primaryEmail: contactData.primaryEmail },
+          create: contactData,
+          update: {},
+        });
+      }
+      if (contactData.primaryPhone) {
+        return await tx.contact.upsert({
+          where: { primaryPhone: contactData.primaryPhone },
+          create: contactData,
+          update: {},
+        });
+      }
+    }
+
+    return await tx.contact.create({
+      data: contactData,
+    });
   }
 
   /**
    * Process a normalized inbound message through the full ingestion pipeline.
    */
   async ingestInboundMessage(inbound: NormalizedInboundMessage): Promise<IngestResult> {
-    // 1. Idempotency / Deduplication Check
-    const existingMessage = await prisma.message.findUnique({
-      where: { externalMessageId: inbound.externalMessageId },
-      include: {
-        conversation: {
-          include: {
-            contact: true,
-            lead: true,
+    const maxRetries = 3;
+
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      // 1. Idempotency / Deduplication Check
+      const existingMessage = await prisma.message.findUnique({
+        where: { externalMessageId: inbound.externalMessageId },
+        include: {
+          conversation: {
+            include: {
+              contact: true,
+              lead: true,
+            },
           },
         },
-      },
-    });
+      });
 
-    if (existingMessage) {
-      logger.info(
-        `Duplicate message ignored (externalMessageId: ${inbound.externalMessageId})`,
-      );
-      return {
-        message: existingMessage,
-        conversation: existingMessage.conversation,
-        contact: existingMessage.conversation.contact,
-        lead: existingMessage.conversation.lead as Lead,
-        deduplicated: true,
-      };
+      if (existingMessage) {
+        logger.info(
+          `Duplicate message ignored (externalMessageId: ${inbound.externalMessageId})`,
+        );
+        return {
+          message: existingMessage,
+          conversation: existingMessage.conversation,
+          contact: existingMessage.conversation.contact,
+          lead: existingMessage.conversation.lead as Lead,
+          deduplicated: true,
+        };
+      }
+
+      // 2. Transactional multi-write pipeline
+      try {
+        return await this.executeIngestTransaction(inbound);
+      } catch (error) {
+        if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          error.code === 'P2002'
+        ) {
+          const target = error.meta?.target;
+          const isExternalMessageIdConstraint =
+            (Array.isArray(target) && target.includes('externalMessageId')) ||
+            (typeof target === 'string' && target.includes('externalMessageId')) ||
+            String(error.message).includes('externalMessageId');
+
+          if (isExternalMessageIdConstraint) {
+            logger.info(
+              `Concurrent duplicate webhook resolved for externalMessageId: ${inbound.externalMessageId}`,
+            );
+
+            const recheckedMessage = await prisma.message.findUnique({
+              where: { externalMessageId: inbound.externalMessageId },
+              include: {
+                conversation: {
+                  include: {
+                    contact: true,
+                    lead: true,
+                  },
+                },
+              },
+            });
+
+            if (recheckedMessage) {
+              return {
+                message: recheckedMessage,
+                conversation: recheckedMessage.conversation,
+                contact: recheckedMessage.conversation.contact,
+                lead: recheckedMessage.conversation.lead as Lead,
+                deduplicated: true,
+              };
+            }
+          }
+
+          // If concurrent conflict was on contact or conversation unique constraint, retry
+          if (attempt < maxRetries - 1) {
+            logger.info(
+              `Concurrent unique constraint conflict (${JSON.stringify(target || error.message)}), retrying ingestion attempt ${attempt + 1}/${maxRetries}...`,
+            );
+            await new Promise((resolve) => setTimeout(resolve, 50 * (attempt + 1)));
+            continue;
+          }
+        }
+        throw error;
+      }
     }
 
-    // 2. Transactional multi-write pipeline
-    try {
-      return await prisma.$transaction(async (tx) => {
-        // 2a. Resolve or Create Contact
-        const contact = await this.resolveOrCreateContact(tx, inbound);
+    throw new Error('Failed to ingest inbound message after concurrency retries');
+  }
 
-        // 2b. Resolve or Create Conversation Thread
-        let conversation = await tx.conversation.findFirst({
-          where: {
+  /**
+   * Execute transactional multi-write pipeline for inbound message.
+   */
+  private async executeIngestTransaction(inbound: NormalizedInboundMessage): Promise<IngestResult> {
+    return await prisma.$transaction(async (tx) => {
+      // 2a. Resolve or Create Contact
+      const contact = await this.resolveOrCreateContact(tx, inbound);
+
+      // 2b. Resolve or Create Conversation Thread
+      let conversation = await tx.conversation.findUnique({
+        where: {
+          contactId_channel: {
             contactId: contact.id,
             channel: inbound.channel,
           },
-        });
+        },
+      });
 
-        // 2c. Deterministic Lead Resolution
-        let lead = await this.resolveOpenLead(
-          tx,
-          contact.id,
-          conversation?.leadId ?? null,
-          inbound.suggestedCategory,
-        );
+      // 2c. Deterministic Lead Resolution
+      let lead = await this.resolveOpenLead(
+        tx,
+        contact.id,
+        conversation?.leadId ?? null,
+        inbound.suggestedCategory,
+      );
 
-        if (!lead) {
-          // Auto-create lead if no open lead exists
-          lead = await tx.lead.create({
-            data: {
-              title: `Inbound ${inbound.channel} enquiry: ${contact.name}`,
-              category: inbound.suggestedCategory || LeadCategory.OTHER_BUSINESS,
-              status: LeadStatus.NEW,
-              sourceChannel: inbound.channel,
-              contactId: contact.id,
-            },
-          });
-
-          await tx.activityLog.create({
-            data: {
-              leadId: lead.id,
-              type: ActivityType.LEAD_CREATED,
-              description: `Lead created from inbound ${inbound.channel} message`,
-              metadata: {
-                externalMessageId: inbound.externalMessageId,
-                channel: inbound.channel,
-              },
-            },
-          });
-        } else if (lead.status === LeadStatus.CONTACTED) {
-          // Auto-transition CONTACTED -> REPLIED on customer response
-          lead = await tx.lead.update({
-            where: { id: lead.id },
-            data: { status: LeadStatus.REPLIED },
-          });
-
-          await tx.activityLog.create({
-            data: {
-              leadId: lead.id,
-              type: ActivityType.STATUS_CHANGED,
-              description: `Status changed from CONTACTED to REPLIED via inbound ${inbound.channel} message`,
-              metadata: {
-                previousStatus: LeadStatus.CONTACTED,
-                newStatus: LeadStatus.REPLIED,
-                externalMessageId: inbound.externalMessageId,
-              },
-            },
-          });
-        }
-
-        // 2d. Update or Create Conversation
-        if (!conversation) {
-          conversation = await tx.conversation.create({
-            data: {
-              contactId: contact.id,
-              leadId: lead.id,
-              channel: inbound.channel,
-              channelThreadId: inbound.senderIdentifier,
-              lastMessageAt: inbound.timestamp,
-            },
-          });
-        } else {
-          conversation = await tx.conversation.update({
-            where: { id: conversation.id },
-            data: {
-              leadId: lead.id,
-              lastMessageAt: inbound.timestamp,
-            },
-          });
-        }
-
-        // 2e. Persist Message
-        const message = await tx.message.create({
+      if (!lead) {
+        // Auto-create lead if no open lead exists
+        lead = await tx.lead.create({
           data: {
-            conversationId: conversation.id,
-            direction: MessageDirection.INBOUND,
-            status: MessageStatus.RECEIVED,
-            body: inbound.body,
-            subject: inbound.subject,
-            rfcMessageId: inbound.rfcMessageId,
-            inReplyTo: inbound.inReplyTo,
-            references: inbound.references,
-            senderIdentifier: inbound.senderIdentifier,
-            senderName: inbound.senderName,
-            recipientIdentifier: inbound.recipientIdentifier,
-            externalMessageId: inbound.externalMessageId,
-            rawPayload: inbound.rawPayload as Prisma.InputJsonValue,
-            createdAt: inbound.timestamp,
+            title: `Inbound ${inbound.channel} enquiry: ${contact.name}`,
+            category: inbound.suggestedCategory || LeadCategory.OTHER_BUSINESS,
+            status: LeadStatus.NEW,
+            sourceChannel: inbound.channel,
+            contactId: contact.id,
           },
         });
 
-        // 2f. Log Activity for Inbound Message
         await tx.activityLog.create({
           data: {
             leadId: lead.id,
-            type: ActivityType.MESSAGE_RECEIVED,
-            description: `Received inbound message via ${inbound.channel}`,
+            type: ActivityType.LEAD_CREATED,
+            description: `Lead created from inbound ${inbound.channel} message`,
             metadata: {
-              conversationId: conversation.id,
-              messageId: message.id,
+              externalMessageId: inbound.externalMessageId,
               channel: inbound.channel,
-              sender: inbound.senderIdentifier,
             },
           },
         });
+      } else if (lead.status === LeadStatus.CONTACTED) {
+        // Auto-transition CONTACTED -> REPLIED on customer response
+        lead = await tx.lead.update({
+          where: { id: lead.id },
+          data: { status: LeadStatus.REPLIED },
+        });
 
-        return {
-          message,
-          conversation,
-          contact,
-          lead,
-          deduplicated: false,
-        };
-      });
-    } catch (error) {
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === 'P2002'
-      ) {
-        const target = error.meta?.target;
-        const isExternalMessageIdConstraint =
-          (Array.isArray(target) && target.includes('externalMessageId')) ||
-          (typeof target === 'string' && target.includes('externalMessageId')) ||
-          String(error.message).includes('externalMessageId');
-
-        if (isExternalMessageIdConstraint) {
-          logger.info(
-            `Concurrent duplicate webhook resolved for externalMessageId: ${inbound.externalMessageId}`,
-          );
-
-          const existingMessage = await prisma.message.findUnique({
-            where: { externalMessageId: inbound.externalMessageId },
-            include: {
-              conversation: {
-                include: {
-                  contact: true,
-                  lead: true,
-                },
-              },
+        await tx.activityLog.create({
+          data: {
+            leadId: lead.id,
+            type: ActivityType.STATUS_CHANGED,
+            description: `Status changed from CONTACTED to REPLIED via inbound ${inbound.channel} message`,
+            metadata: {
+              previousStatus: LeadStatus.CONTACTED,
+              newStatus: LeadStatus.REPLIED,
+              externalMessageId: inbound.externalMessageId,
             },
-          });
-
-          if (existingMessage) {
-            return {
-              message: existingMessage,
-              conversation: existingMessage.conversation,
-              contact: existingMessage.conversation.contact,
-              lead: existingMessage.conversation.lead as Lead,
-              deduplicated: true,
-            };
-          }
-        }
+          },
+        });
       }
-      throw error;
-    }
+
+      // 2d. Update or Create Conversation (race-safe upsert)
+      conversation = await tx.conversation.upsert({
+        where: {
+          contactId_channel: {
+            contactId: contact.id,
+            channel: inbound.channel,
+          },
+        },
+        create: {
+          contactId: contact.id,
+          leadId: lead.id,
+          channel: inbound.channel,
+          channelThreadId: inbound.senderIdentifier,
+          lastMessageAt: inbound.timestamp,
+        },
+        update: {
+          leadId: lead.id,
+          lastMessageAt: inbound.timestamp,
+        },
+      });
+
+      // 2e. Persist Message
+      const message = await tx.message.create({
+        data: {
+          conversationId: conversation.id,
+          direction: MessageDirection.INBOUND,
+          status: MessageStatus.RECEIVED,
+          body: inbound.body,
+          subject: inbound.subject,
+          rfcMessageId: inbound.rfcMessageId,
+          inReplyTo: inbound.inReplyTo,
+          references: inbound.references,
+          senderIdentifier: inbound.senderIdentifier,
+          senderName: inbound.senderName,
+          recipientIdentifier: inbound.recipientIdentifier,
+          externalMessageId: inbound.externalMessageId,
+          rawPayload: inbound.rawPayload as Prisma.InputJsonValue,
+          createdAt: inbound.timestamp,
+        },
+      });
+
+      // 2f. Log Activity for Inbound Message
+      await tx.activityLog.create({
+        data: {
+          leadId: lead.id,
+          type: ActivityType.MESSAGE_RECEIVED,
+          description: `Received inbound message via ${inbound.channel}`,
+          metadata: {
+            conversationId: conversation.id,
+            messageId: message.id,
+            channel: inbound.channel,
+            sender: inbound.senderIdentifier,
+          },
+        },
+      });
+
+      return {
+        message,
+        conversation,
+        contact,
+        lead,
+        deduplicated: false,
+      };
+    });
   }
 }
 

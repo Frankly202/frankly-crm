@@ -148,6 +148,7 @@ model Conversation {
   lead     Lead?     @relation(fields: [leadId], references: [id], onDelete: SetNull)
   messages Message[]
 
+  @@unique([contactId, channel])
   @@index([contactId])
   @@index([leadId])
   @@index([channel])

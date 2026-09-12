@@ -21,6 +21,15 @@ describe('Conversations API Integration', () => {
       });
     adminToken = loginRes.body.data.accessToken;
 
+    // Clean up any test fixtures from previous runs
+    await prisma.contact.deleteMany({
+      where: {
+        primaryEmail: {
+          in: ['conv.test@example.com', 'email.threading@example.com'],
+        },
+      },
+    });
+
     // Create test contact, lead, and conversation with an inbound message
     const contact = await prisma.contact.create({
       data: {
@@ -120,10 +129,21 @@ describe('Conversations API Integration', () => {
       const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
       const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000);
 
+      // Dedicated contacts to comply with @@unique([contactId, channel])
+      const contact1 = await prisma.contact.create({
+        data: { name: 'Unread Test 1', primaryPhone: '+35799110001' },
+      });
+      const contact2 = await prisma.contact.create({
+        data: { name: 'Unread Test 2', primaryPhone: '+35799110002' },
+      });
+      const contact3 = await prisma.contact.create({
+        data: { name: 'Unread Test 3', primaryPhone: '+35799110003' },
+      });
+
       // 1. Never read conversation
       const neverReadConv = await prisma.conversation.create({
         data: {
-          contactId: testContactId,
+          contactId: contact1.id,
           channel: ChannelType.WHATSAPP,
           channelThreadId: '+35799110001',
           lastMessageAt: now,
@@ -134,7 +154,7 @@ describe('Conversations API Integration', () => {
       // 2. Previously read conversation, but customer sent a new message afterwards
       const readWithNewMessageConv = await prisma.conversation.create({
         data: {
-          contactId: testContactId,
+          contactId: contact2.id,
           channel: ChannelType.WHATSAPP,
           channelThreadId: '+35799110002',
           lastReadAt: oneHourAgo,
@@ -145,7 +165,7 @@ describe('Conversations API Integration', () => {
       // 3. Previously read conversation with no subsequent messages
       const readNoNewMessageConv = await prisma.conversation.create({
         data: {
-          contactId: testContactId,
+          contactId: contact3.id,
           channel: ChannelType.WHATSAPP,
           channelThreadId: '+35799110003',
           lastMessageAt: twoHoursAgo,
@@ -173,6 +193,11 @@ describe('Conversations API Integration', () => {
         await prisma.conversation.deleteMany({
           where: {
             id: { in: [neverReadConv.id, readWithNewMessageConv.id, readNoNewMessageConv.id] },
+          },
+        });
+        await prisma.contact.deleteMany({
+          where: {
+            id: { in: [contact1.id, contact2.id, contact3.id] },
           },
         });
       }

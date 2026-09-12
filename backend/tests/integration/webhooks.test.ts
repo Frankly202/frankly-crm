@@ -10,12 +10,7 @@ import resendFixture from '../../src/modules/webhooks/fixtures/resend.fixture.js
 import websiteFixture from '../../src/modules/webhooks/fixtures/website.fixture.json';
 
 describe('Webhooks & Inbound Channel Ingestion Integration', () => {
-  beforeAll(async () => {
-    await connectDatabase();
-  });
-
-  afterAll(async () => {
-    // Clean up contacts and leads created during webhook tests
+  const cleanupFixtures = async () => {
     await prisma.message.deleteMany({
       where: {
         externalMessageId: {
@@ -43,7 +38,15 @@ describe('Webhooks & Inbound Channel Ingestion Integration', () => {
         ],
       },
     });
+  };
 
+  beforeAll(async () => {
+    await connectDatabase();
+    await cleanupFixtures();
+  });
+
+  afterAll(async () => {
+    await cleanupFixtures();
     await disconnectDatabase();
   });
 
@@ -432,10 +435,115 @@ describe('Webhooks & Inbound Channel Ingestion Integration', () => {
         where: { primaryPhone: '+35799887766' },
       });
       if (contact) {
+        await prisma.message.deleteMany({ where: { conversation: { contactId: contact.id } } });
         await prisma.conversation.deleteMany({ where: { contactId: contact.id } });
+        await prisma.activityLog.deleteMany({ where: { lead: { contactId: contact.id } } });
         await prisma.lead.deleteMany({ where: { contactId: contact.id } });
         await prisma.contact.delete({ where: { id: contact.id } });
       }
+    });
+
+    it('should create exactly one conversation thread when two distinct messages arrive concurrently for a new contact (Phase 4)', async () => {
+      const now = Date.now();
+      const concurrentPhone = '35799776655';
+      const msgId1 = `wamid.THREAD_CONC_1_${now}`;
+      const msgId2 = `wamid.THREAD_CONC_2_${now}`;
+
+      const buildPayload = (msgId: string, body: string, timestamp: string) => ({
+        object: 'whatsapp_business_account',
+        entry: [
+          {
+            id: 'WHATSAPP_BUSINESS_ACCOUNT_ID',
+            changes: [
+              {
+                value: {
+                  messaging_product: 'whatsapp',
+                  metadata: {
+                    display_phone_number: '35722000000',
+                    phone_number_id: 'PHONE_NUMBER_ID',
+                  },
+                  contacts: [
+                    {
+                      profile: { name: 'Concurrent Thread Customer' },
+                      wa_id: concurrentPhone,
+                    },
+                  ],
+                  messages: [
+                    {
+                      from: concurrentPhone,
+                      id: msgId,
+                      timestamp,
+                      text: { body },
+                      type: 'text',
+                    },
+                  ],
+                },
+                field: 'messages',
+              },
+            ],
+          },
+        ],
+      });
+
+      // Fire 2 concurrent distinct messages for a brand-new contact
+      const [res1, res2] = await Promise.all([
+        request(app)
+          .post('/api/v1/webhooks/whatsapp')
+          .set('x-local-fixture-test', 'true')
+          .send(buildPayload(msgId1, 'First concurrent message', '1725900001')),
+        request(app)
+          .post('/api/v1/webhooks/whatsapp')
+          .set('x-local-fixture-test', 'true')
+          .send(buildPayload(msgId2, 'Second concurrent message', '1725900002')),
+      ]);
+
+      expect(res1.status).toBe(200);
+      expect(res2.status).toBe(200);
+      expect(res1.body.success).toBe(true);
+      expect(res2.body.success).toBe(true);
+
+      // Both distinct messages should be stored and processed (neither is a duplicate of the other)
+      expect(res1.body.data.messages[0].deduplicated).toBe(false);
+      expect(res2.body.data.messages[0].deduplicated).toBe(false);
+
+      // Verify contact
+      const contact = await prisma.contact.findUnique({
+        where: { primaryPhone: `+${concurrentPhone}` },
+      });
+      expect(contact).toBeDefined();
+
+      // Verify exactly ONE conversation thread was created for this contact & channel
+      const conversations = await prisma.conversation.findMany({
+        where: { contactId: contact!.id, channel: ChannelType.WHATSAPP },
+      });
+      expect(conversations.length).toBe(1);
+
+      // Verify both messages are attached to the SAME single conversation
+      const messages = await prisma.message.findMany({
+        where: {
+          externalMessageId: { in: [msgId1, msgId2] },
+        },
+      });
+      expect(messages.length).toBe(2);
+      expect(messages[0]!.conversationId).toBe(conversations[0]!.id);
+      expect(messages[1]!.conversationId).toBe(conversations[0]!.id);
+
+      // Cleanup
+      await prisma.message.deleteMany({
+        where: { conversationId: conversations[0]!.id },
+      });
+      await prisma.conversation.deleteMany({
+        where: { contactId: contact!.id },
+      });
+      await prisma.activityLog.deleteMany({
+        where: { lead: { contactId: contact!.id } },
+      });
+      await prisma.lead.deleteMany({
+        where: { contactId: contact!.id },
+      });
+      await prisma.contact.delete({
+        where: { id: contact!.id },
+      });
     });
   });
 

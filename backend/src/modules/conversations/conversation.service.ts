@@ -406,10 +406,12 @@ export class ConversationService {
         });
       }
 
-      let conversation = await tx.conversation.findFirst({
+      let conversation = await tx.conversation.findUnique({
         where: {
-          contactId: contact.id,
-          channel: ChannelType.RESEND_EMAIL,
+          contactId_channel: {
+            contactId: contact.id,
+            channel: ChannelType.RESEND_EMAIL,
+          },
         },
       });
 
@@ -473,27 +475,27 @@ export class ConversationService {
         });
       }
 
-      if (!conversation) {
-        conversation = await tx.conversation.create({
-          data: {
+      conversation = await tx.conversation.upsert({
+        where: {
+          contactId_channel: {
             contactId: contact.id,
-            leadId: lead.id,
             channel: ChannelType.RESEND_EMAIL,
-            channelThreadId: targetEmail,
-            lastMessageAt: new Date(),
-            lastReadAt: new Date(),
           },
-        });
-      } else {
-        conversation = await tx.conversation.update({
-          where: { id: conversation.id },
-          data: {
-            leadId: lead.id,
-            lastMessageAt: new Date(),
-            lastReadAt: new Date(),
-          },
-        });
-      }
+        },
+        create: {
+          contactId: contact.id,
+          leadId: lead.id,
+          channel: ChannelType.RESEND_EMAIL,
+          channelThreadId: targetEmail,
+          lastMessageAt: new Date(),
+          lastReadAt: new Date(),
+        },
+        update: {
+          leadId: lead.id,
+          lastMessageAt: new Date(),
+          lastReadAt: new Date(),
+        },
+      });
 
       const pendingMessage = await tx.message.create({
         data: {

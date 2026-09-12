@@ -24,6 +24,15 @@ describe('Leads API Integration', () => {
       });
     adminToken = loginRes.body.data.accessToken;
 
+    // Clean up test users from previous runs
+    await prisma.user.deleteMany({
+      where: {
+        email: {
+          in: ['lead.agent1@example.com', 'lead.agent2@example.com', 'lead.deactivated@example.com'],
+        },
+      },
+    });
+
     const passwordHash = await bcrypt.hash('TestPass123!', 10);
     const agent1 = await prisma.user.create({
       data: {
