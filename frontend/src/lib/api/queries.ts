@@ -190,6 +190,8 @@ export interface ConversationFilters extends Record<string, unknown> {
   unreadOnly?: boolean | undefined;
 }
 
+export const INBOX_POLL_INTERVAL = 15000;
+
 export const useConversations = (filters: ConversationFilters) =>
   useQuery({
     queryKey: queryKeys.conversations.list(filters),
@@ -198,6 +200,9 @@ export const useConversations = (filters: ConversationFilters) =>
       return { data: res.data, meta: res.meta };
     },
     placeholderData: (prev) => prev,
+    refetchInterval: INBOX_POLL_INTERVAL,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
   });
 
 export const useUnreadCount = (channel?: string | undefined) =>
@@ -208,6 +213,9 @@ export const useUnreadCount = (channel?: string | undefined) =>
       const res = await apiRequest<{ unreadCount: number }>(`/conversations/unread-count${query}`);
       return res.data;
     },
+    refetchInterval: INBOX_POLL_INTERVAL,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
   });
 
 export const useConversation = (id: string | null) =>
@@ -215,6 +223,9 @@ export const useConversation = (id: string | null) =>
     queryKey: queryKeys.conversations.detail(id ?? "none"),
     queryFn: async () => (await apiRequest<ConversationDetail>(`/conversations/${id}`)).data,
     enabled: Boolean(id),
+    refetchInterval: INBOX_POLL_INTERVAL,
+    refetchIntervalInBackground: false,
+    refetchOnWindowFocus: true,
   });
 
 export const useSendMessage = (id: string) => {

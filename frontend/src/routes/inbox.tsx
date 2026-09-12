@@ -79,9 +79,30 @@ function InboxPage() {
 
   const conversations = useMemo(() => listQuery.data?.data ?? [], [listQuery.data?.data]);
 
-  // Selected conversation detail
+  // Selected conversation detail:
+  // When no conversationId is in the URL, pin the initially resolved conversation
+  // so background 15s polling and list reordering do not abruptly steal the active view.
+  const [fallbackConvId, setFallbackConvId] = useState<string | null>(null);
+
+  const isFallbackValid = useMemo(
+    () => Boolean(fallbackConvId && conversations.some((c) => c.id === fallbackConvId)),
+    [fallbackConvId, conversations],
+  );
+
+  useEffect(() => {
+    if (!conversationId) {
+      if (conversations.length > 0) {
+        if (!fallbackConvId || !isFallbackValid) {
+          setFallbackConvId(conversations[0]?.id ?? null);
+        }
+      } else {
+        setFallbackConvId(null);
+      }
+    }
+  }, [conversationId, conversations, fallbackConvId, isFallbackValid]);
+
   const selectedConvId: string | null =
-    conversationId ?? (conversations.length > 0 ? (conversations[0]?.id ?? null) : null);
+    conversationId ?? (isFallbackValid ? fallbackConvId : (conversations[0]?.id ?? null));
 
   const detailQuery = useConversation(selectedConvId);
   const convDetail = detailQuery.data;
@@ -107,6 +128,7 @@ function InboxPage() {
   }, [conversationId]);
 
   function handleSelectConversation(id: string) {
+    setFallbackConvId(id);
     void navigate({
       search: (prev: InboxSearch) => ({
         ...prev,

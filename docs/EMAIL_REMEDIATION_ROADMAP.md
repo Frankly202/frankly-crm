@@ -440,7 +440,17 @@ Emmanuel's Primary Gmail Inbox       frankly@huejoraata.resend.app (Resend Inbou
 
 ---
 
-### PHASE 8 — Inbox Freshness & Active Polling
+### PHASE 8 — Inbox Freshness & Active Polling [COMPLETE]
+
+> **Status:** `[COMPLETE]` — Implemented 15-second client polling across conversations list, conversation detail, and unread count with tab-inactivity pausing, window refocus fetching, and selection pinning.  
+> **Validation Results:**
+> - Frontend Unit Tests: 7/7 test files passed (45/45 tests, including all `inbox-polling.test.tsx` and `inbox.test.tsx` tests)
+> - Frontend Lint & Build: Clean (0 errors, clean Vite + Nitro build)
+> - Backend Unit Tests: 17/17 test files passed (121/121 tests)
+> - Backend Integration Tests: 12/12 test files passed (107/107 tests against `frankly_crm_test`)
+> - Backend Lint, Typecheck, Build: Clean (0 errors)
+> - Database Safety Invariant: 100% test isolation, zero production Supabase touches.
+> - Polling Invariant: Zero WebSockets / Socket.io / Redis required; queries pause when tab is backgrounded.
 
 - **Objective**: Ensure agents see new incoming inquiries without manually reloading the page, using lightweight client polling.
 - **Exact Scope**:

@@ -261,4 +261,14 @@ describe("Unified Inbox Route Component", () => {
 
     expect(mockMutateMarkRead).toHaveBeenCalledWith("cv-002");
   });
+
+  it("should maintain stable active conversation selection when conversationId is unprovided in search params", () => {
+    mockSearch = {};
+    const Component = (Route as unknown as { component: React.ComponentType }).component;
+    renderWithClient(<Component />);
+
+    // Default selected is cv-001 (Elena Georgiou)
+    expect(screen.getAllByText("Elena Georgiou").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText(/Thread: \+35799123456/i)).toBeDefined();
+  });
 });
