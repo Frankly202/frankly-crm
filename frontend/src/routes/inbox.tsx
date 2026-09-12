@@ -18,6 +18,7 @@ import { toast } from "sonner";
 import { AppShell } from "@/components/layout/AppShell";
 import { CategoryBadge, ChannelBadge, StatusBadge } from "@/components/crm/badges";
 import { ComposeEmailDialog } from "@/components/crm/ComposeEmailDialog";
+import { SafeMessageBody } from "@/components/crm/SafeMessageBody";
 import { EmptyState, ErrorState, RowSkeleton } from "@/components/crm/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -494,7 +495,7 @@ function InboxPage() {
                                 </div>
                               )}
                               <p className="whitespace-pre-wrap break-words leading-relaxed">
-                                {msg.body}
+                                <SafeMessageBody body={msg.body} isInbound={isInbound} />
                               </p>
                             </div>
                           </div>
