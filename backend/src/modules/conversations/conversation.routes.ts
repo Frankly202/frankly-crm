@@ -5,6 +5,7 @@ import { validate } from '../../common/middlewares/validate.middleware.js';
 import { outboundEmailRateLimiter } from '../../common/middlewares/rate-limiter.middleware.js';
 import {
   conversationQuerySchema,
+  unreadCountQuerySchema,
   sendOutboundMessageSchema,
   startEmailConversationSchema,
 } from './conversation.schemas.js';
@@ -15,6 +16,10 @@ router.use(authenticate);
 
 router.get('/', validate({ query: conversationQuerySchema }), (req, res, next) =>
   conversationController.listConversations(req, res, next),
+);
+
+router.get('/unread-count', validate({ query: unreadCountQuerySchema }), (req, res, next) =>
+  conversationController.getUnreadCount(req, res, next),
 );
 
 router.post(

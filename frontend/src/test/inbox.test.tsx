@@ -165,6 +165,17 @@ vi.mock("@/lib/api/queries", () => ({
     mutateAsync: vi.fn(),
     isPending: false,
   }),
+  useUnreadCount: (channel?: string) => {
+    let count = mockConversations.filter((c) => c.isUnread);
+    if (channel) {
+      count = count.filter((c) => c.channel === channel);
+    }
+    return {
+      data: { unreadCount: count.length },
+      isLoading: false,
+      isError: false,
+    };
+  },
 }));
 
 import { Route } from "@/routes/inbox";

@@ -189,6 +189,25 @@ describe('Conversations API Integration', () => {
         expect(returnedIds).toContain(readWithNewMessageConv.id);
         // read-with-no-new-message MUST be excluded
         expect(returnedIds).not.toContain(readNoNewMessageConv.id);
+
+        // Phase 5 bounded pagination test
+        const page1Res = await request(app)
+          .get('/api/v1/conversations?unreadOnly=true&page=1&limit=1')
+          .set('Authorization', `Bearer ${adminToken}`);
+        expect(page1Res.status).toBe(200);
+        expect(page1Res.body.data.length).toBe(1);
+        expect(page1Res.body.meta.limit).toBe(1);
+        expect(page1Res.body.meta.page).toBe(1);
+        expect(page1Res.body.meta.total).toBeGreaterThanOrEqual(2);
+
+        const page2Res = await request(app)
+          .get('/api/v1/conversations?unreadOnly=true&page=2&limit=1')
+          .set('Authorization', `Bearer ${adminToken}`);
+        expect(page2Res.status).toBe(200);
+        expect(page2Res.body.data.length).toBe(1);
+        expect(page2Res.body.meta.page).toBe(2);
+        // Ensure page 1 and page 2 return distinct unread conversations
+        expect(page1Res.body.data[0].id).not.toBe(page2Res.body.data[0].id);
       } finally {
         await prisma.conversation.deleteMany({
           where: {
@@ -201,6 +220,35 @@ describe('Conversations API Integration', () => {
           },
         });
       }
+    });
+  });
+
+  describe('GET /api/v1/conversations/unread-count (Phase 5)', () => {
+    it('should reject unauthenticated request with 401', async () => {
+      const response = await request(app).get('/api/v1/conversations/unread-count');
+      expect(response.status).toBe(401);
+    });
+
+    it('should return accurate unread count and avoid route collision with GET /:id', async () => {
+      const response = await request(app)
+        .get('/api/v1/conversations/unread-count')
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.success).toBe(true);
+      expect(typeof response.body.data.unreadCount).toBe('number');
+      // If it collided with /:id, it would return a conversation or 404
+      expect(response.body.data.id).toBeUndefined();
+    });
+
+    it('should support channel filtering on unread-count', async () => {
+      const response = await request(app)
+        .get(`/api/v1/conversations/unread-count?channel=${ChannelType.WHATSAPP}`)
+        .set('Authorization', `Bearer ${adminToken}`);
+
+      expect(response.status).toBe(200);
+      expect(response.body.success).toBe(true);
+      expect(typeof response.body.data.unreadCount).toBe('number');
     });
   });
 

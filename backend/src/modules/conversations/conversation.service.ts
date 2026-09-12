@@ -104,12 +104,119 @@ export class ConversationService {
     }
 
     if (query.unreadOnly) {
-      // Unread means never read (lastReadAt is null) OR new message arrived after last read
-      const unreadRecords = await prisma.$queryRaw<Array<{ id: string }>>`
-        SELECT id FROM "conversations"
-        WHERE "lastReadAt" IS NULL OR "lastMessageAt" > "lastReadAt"
-      `;
-      where.id = { in: unreadRecords.map((r) => r.id) };
+      const conditions: Prisma.Sql[] = [
+        Prisma.sql`("lastReadAt" IS NULL OR "lastMessageAt" > "lastReadAt")`,
+      ];
+
+      if (query.channel) {
+        conditions.push(Prisma.sql`c."channel" = ${query.channel}::"ChannelType"`);
+      }
+      if (query.contactId) {
+        conditions.push(Prisma.sql`c."contactId" = ${query.contactId}`);
+      }
+      if (query.leadId) {
+        conditions.push(Prisma.sql`c."leadId" = ${query.leadId}`);
+      }
+      if (query.search) {
+        const searchPattern = `%${query.search.trim()}%`;
+        conditions.push(Prisma.sql`(
+          c."channelThreadId" ILIKE ${searchPattern}
+          OR EXISTS (
+            SELECT 1 FROM "contacts" ct
+            WHERE ct.id = c."contactId"
+            AND (
+              ct.name ILIKE ${searchPattern}
+              OR ct."primaryEmail" ILIKE ${searchPattern}
+              OR ct."primaryPhone" LIKE ${searchPattern}
+              OR ct."instagramHandle" ILIKE ${searchPattern}
+            )
+          )
+          OR EXISTS (
+            SELECT 1 FROM "messages" m
+            WHERE m."conversationId" = c.id
+            AND m.body ILIKE ${searchPattern}
+          )
+        )`);
+      }
+
+      const whereClause = Prisma.sql`WHERE ${Prisma.join(conditions, ' AND ')}`;
+
+      const [countResult, pageRecords] = await Promise.all([
+        prisma.$queryRaw<Array<{ count: bigint }>>`
+          SELECT COUNT(*)::bigint as count
+          FROM "conversations" c
+          ${whereClause}
+        `,
+        prisma.$queryRaw<Array<{ id: string }>>`
+          SELECT c.id
+          FROM "conversations" c
+          ${whereClause}
+          ORDER BY c."lastMessageAt" DESC
+          LIMIT ${take}
+          OFFSET ${skip}
+        `,
+      ]);
+
+      const total = Number(countResult[0]?.count ?? 0);
+      const pageIds = pageRecords.map((r) => r.id);
+
+      if (pageIds.length === 0) {
+        return {
+          conversations: [],
+          meta: buildPaginationMeta(total, page, limit),
+        };
+      }
+
+      const rawConversations = await prisma.conversation.findMany({
+        where: { id: { in: pageIds } },
+        include: {
+          contact: {
+            select: {
+              id: true,
+              name: true,
+              primaryEmail: true,
+              primaryPhone: true,
+              instagramHandle: true,
+            },
+          },
+          lead: {
+            select: {
+              id: true,
+              title: true,
+              category: true,
+              status: true,
+              assignedToUserId: true,
+            },
+          },
+          messages: {
+            take: 1,
+            orderBy: { createdAt: 'desc' },
+            select: {
+              id: true,
+              direction: true,
+              status: true,
+              body: true,
+              createdAt: true,
+            },
+          },
+        },
+      });
+
+      // Preserve exact order from pageIds
+      const convMap = new Map(rawConversations.map((c) => [c.id, c]));
+      const orderedConversations = pageIds
+        .map((id) => convMap.get(id))
+        .filter((c): c is NonNullable<typeof c> => Boolean(c))
+        .map((conv) => ({
+          ...conv,
+          latestMessage: conv.messages[0] || null,
+          isUnread: true,
+        }));
+
+      return {
+        conversations: orderedConversations,
+        meta: buildPaginationMeta(total, page, limit),
+      };
     }
 
     const [total, rawConversations] = await Promise.all([
@@ -154,21 +261,42 @@ export class ConversationService {
     ]);
 
     // Compute isUnread for each conversation
-    const conversations = rawConversations
-      .map((conv) => {
-        const isUnread =
-          !conv.lastReadAt || conv.lastMessageAt.getTime() > conv.lastReadAt.getTime();
-        return {
-          ...conv,
-          latestMessage: conv.messages[0] || null,
-          isUnread,
-        };
-      })
-      .filter((conv) => (query.unreadOnly ? conv.isUnread : true));
+    const conversations = rawConversations.map((conv) => {
+      const isUnread =
+        !conv.lastReadAt || conv.lastMessageAt.getTime() > conv.lastReadAt.getTime();
+      return {
+        ...conv,
+        latestMessage: conv.messages[0] || null,
+        isUnread,
+      };
+    });
 
     return {
       conversations,
       meta: buildPaginationMeta(total, page, limit),
+    };
+  }
+
+  /**
+   * Get total unread conversations count, optionally filtered by channel.
+   */
+  async getUnreadCount(channel?: ChannelType): Promise<{ unreadCount: number }> {
+    const conditions: Prisma.Sql[] = [
+      Prisma.sql`("lastReadAt" IS NULL OR "lastMessageAt" > "lastReadAt")`,
+    ];
+
+    if (channel) {
+      conditions.push(Prisma.sql`"channel" = ${channel}::"ChannelType"`);
+    }
+
+    const result = await prisma.$queryRaw<Array<{ count: bigint }>>`
+      SELECT COUNT(*)::bigint as count
+      FROM "conversations"
+      WHERE ${Prisma.join(conditions, ' AND ')}
+    `;
+
+    return {
+      unreadCount: Number(result[0]?.count ?? 0),
     };
   }
 

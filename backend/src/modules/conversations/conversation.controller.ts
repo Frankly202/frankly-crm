@@ -20,6 +20,20 @@ export class ConversationController {
     }
   }
 
+  async getUnreadCount(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const channel = req.query['channel'] as import('@prisma/client').ChannelType | undefined;
+      const result = await conversationService.getUnreadCount(channel);
+      const response: ApiResponse = {
+        success: true,
+        data: result,
+      };
+      res.status(200).json(response);
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async getConversationById(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const conversation = await conversationService.getConversationById(

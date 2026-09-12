@@ -295,7 +295,17 @@ Emmanuel's Primary Gmail Inbox       frankly@huejoraata.resend.app (Resend Inbou
 
 ---
 
-### PHASE 5 — Inbox Query Performance & Unread State
+### PHASE 5 — Inbox Query Performance & Unread State [COMPLETE]
+
+> **Status:** `[COMPLETE]` — Implemented, indexed, and validated against `frankly_crm_test`.  
+> **Applied Migration:** `20260912074633_add_inbox_performance_indexes`  
+> **Validation Results:**
+> - Backend Integration Tests: 12/12 files passed (107/107 tests)
+> - Backend Unit Tests: 17/17 files passed (115/115 tests)
+> - Frontend Tests: 5/5 files passed (23/23 tests)
+> - Lint & Typecheck: Clean (0 errors across backend and frontend)
+> - Backend & Frontend Production Builds: Clean (`tsc` and Vite/Nitro build successfully)
+> - Test DB Isolation: 100% verified against `frankly_crm_test` on port 5435; 0 production database touches.
 
 - **Objective**: Optimize conversation listing and eliminate unbounded in-memory table scans on the `unreadOnly` filter.
 - **Exact Scope**:

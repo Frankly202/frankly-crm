@@ -35,6 +35,8 @@ export const queryKeys = {
     all: ["conversations"] as const,
     list: (params: Record<string, unknown>) => ["conversations", "list", params] as const,
     detail: (id: string) => ["conversations", "detail", id] as const,
+    unreadCount: (channel?: string | undefined) =>
+      ["conversations", "unread-count", channel] as const,
   },
 };
 
@@ -196,6 +198,16 @@ export const useConversations = (filters: ConversationFilters) =>
       return { data: res.data, meta: res.meta };
     },
     placeholderData: (prev) => prev,
+  });
+
+export const useUnreadCount = (channel?: string | undefined) =>
+  useQuery({
+    queryKey: queryKeys.conversations.unreadCount(channel),
+    queryFn: async (): Promise<{ unreadCount: number }> => {
+      const query = channel ? `?channel=${encodeURIComponent(channel)}` : "";
+      const res = await apiRequest<{ unreadCount: number }>(`/conversations/unread-count${query}`);
+      return res.data;
+    },
   });
 
 export const useConversation = (id: string | null) =>

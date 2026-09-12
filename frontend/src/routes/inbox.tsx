@@ -24,7 +24,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
-import { useConversation, useConversations, useMarkRead, useSendMessage } from "@/lib/api/queries";
+import {
+  useConversation,
+  useConversations,
+  useMarkRead,
+  useSendMessage,
+  useUnreadCount,
+} from "@/lib/api/queries";
 import { CHANNELS, CHANNEL_LABELS, type ChannelType, type Message } from "@/lib/api/types";
 import { formatDate, formatRelative, formatTime, initials } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -161,10 +167,8 @@ function InboxPage() {
     }
   }
 
-  const unreadCount = useMemo(
-    () => conversations.filter((c) => c.isUnread).length,
-    [conversations],
-  );
+  const unreadCountQuery = useUnreadCount(channel ?? undefined);
+  const unreadCount = unreadCountQuery.data?.unreadCount ?? 0;
 
   return (
     <AppShell

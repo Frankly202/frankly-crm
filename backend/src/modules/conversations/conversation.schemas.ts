@@ -32,6 +32,11 @@ export const startEmailConversationSchema = z.object({
   idempotencyKey: z.string().trim().min(8).max(256).optional(),
 });
 
+export const unreadCountQuerySchema = z.object({
+  channel: z.nativeEnum(ChannelType).optional(),
+});
+
 export type ConversationQueryInput = z.infer<typeof conversationQuerySchema>;
+export type UnreadCountQueryInput = z.infer<typeof unreadCountQuerySchema>;
 export type SendOutboundMessageInput = z.infer<typeof sendOutboundMessageSchema>;
 export type StartEmailConversationInput = z.infer<typeof startEmailConversationSchema>;
