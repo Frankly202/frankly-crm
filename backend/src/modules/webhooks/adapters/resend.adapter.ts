@@ -69,6 +69,20 @@ export function minimizeRawPayload(payload: unknown): Record<string, unknown> {
   return sanitized;
 }
 
+export const RETRIEVAL_ATTEMPT_1_TIMEOUT_MS = 3500;
+export const RETRIEVAL_ATTEMPT_2_TIMEOUT_MS = 3000;
+export const RETRIEVAL_BACKOFF_MS = 500;
+
+export interface ReceivedEmailContentResult {
+  text?: string | null;
+  html?: string | null;
+  subject?: string | null;
+  headers?: Record<string, unknown>;
+  fetchStatus: 'SUCCESS' | 'FAILED';
+  statusCode?: number;
+  error?: string;
+}
+
 interface ResendEmailPayload {
   type?: string;
   created_at?: string;
@@ -164,65 +178,137 @@ export class ResendEmailAdapter implements ChannelAdapter {
 
   /**
    * Fetch full email content from Resend Receiving API (GET /emails/receiving/:email_id).
-   * Safe, bounded timeout (8s), sanitized logging (no keys or headers logged).
+   * Safe, bounded retry (attempt 1: 3.5s, 500ms backoff, attempt 2: 3.0s, ~7s total budget).
+   * Retry only on HTTP 429, HTTP 5xx, or network/abort timeout.
+   * Fails fast on non-retryable 4xx responses (401, 403, 404, 422).
+   * Sanitized logging (no keys or headers logged).
    */
-  async fetchReceivedEmailContent(
-    emailId: string,
-  ): Promise<{
-    text?: string | null;
-    html?: string | null;
-    subject?: string | null;
-    headers?: Record<string, unknown>;
-  } | null> {
+  async fetchReceivedEmailContent(emailId: string): Promise<ReceivedEmailContentResult> {
     const apiKey = env.RESEND_API_KEY?.trim() || process.env['RESEND_API_KEY']?.trim();
     if (!apiKey) {
-      return null;
+      return {
+        fetchStatus: 'FAILED',
+        error: 'RESEND_API_KEY is not configured',
+      };
     }
 
     const url = `https://api.resend.com/emails/receiving/${encodeURIComponent(emailId)}`;
+    const attempts = [
+      { attempt: 1, timeoutMs: RETRIEVAL_ATTEMPT_1_TIMEOUT_MS },
+      { attempt: 2, timeoutMs: RETRIEVAL_ATTEMPT_2_TIMEOUT_MS },
+    ];
 
-    try {
-      const response = await fetch(url, {
-        method: 'GET',
-        headers: {
-          Authorization: `Bearer ${apiKey}`,
-          Accept: 'application/json',
-        },
-        signal: AbortSignal.timeout(8000),
-      });
+    let lastResult: ReceivedEmailContentResult = {
+      fetchStatus: 'FAILED',
+      error: 'Unknown retrieval error',
+    };
 
-      if (!response.ok) {
-        logger.warn(`Resend Receiving API returned non-200 status for email: ${response.status}`, {
-          emailId,
-          status: response.status,
+    for (let i = 0; i < attempts.length; i++) {
+      const { attempt, timeoutMs } = attempts[i]!;
+
+      try {
+        const response = await fetch(url, {
+          method: 'GET',
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            Accept: 'application/json',
+          },
+          signal: AbortSignal.timeout(timeoutMs),
         });
-        return null;
+
+        if (response.ok) {
+          const rawJson = await response.json();
+          const parseResult = resendReceivingEmailSchema.safeParse(rawJson);
+          if (!parseResult.success) {
+            logger.warn('Resend Receiving API response validation failed', {
+              emailId,
+              attempt,
+              issues: parseResult.error.issues.map((issue) => issue.message),
+            });
+            return {
+              fetchStatus: 'FAILED',
+              statusCode: response.status,
+              error: 'Invalid schema',
+            };
+          }
+
+          if (attempt > 1) {
+            logger.info('Successfully fetched email content from Resend Receiving API on retry', {
+              emailId,
+              attempt,
+            });
+          }
+
+          return {
+            text: parseResult.data.text ?? null,
+            html: parseResult.data.html ?? null,
+            subject: parseResult.data.subject ?? null,
+            headers: parseResult.data.headers,
+            fetchStatus: 'SUCCESS',
+            statusCode: response.status,
+          };
+        }
+
+        const status = response.status;
+        const isRetryable = status === 429 || (status >= 500 && status <= 599);
+
+        lastResult = {
+          fetchStatus: 'FAILED',
+          statusCode: status,
+          error: `HTTP ${status}`,
+        };
+
+        if (!isRetryable || attempt === attempts.length) {
+          logger.warn(
+            `Resend Receiving API returned non-200 status for email: ${status}${isRetryable ? ' (retries exhausted)' : ' (non-retryable)'}`,
+            {
+              emailId,
+              attempt,
+              status,
+            },
+          );
+          return lastResult;
+        }
+
+        logger.warn(
+          `Resend Receiving API returned retryable status ${status} on attempt ${attempt}, retrying in ${RETRIEVAL_BACKOFF_MS}ms...`,
+          {
+            emailId,
+            attempt,
+            status,
+          },
+        );
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : String(err);
+        lastResult = {
+          fetchStatus: 'FAILED',
+          error: errorMsg,
+        };
+
+        if (attempt === attempts.length) {
+          logger.warn(`Failed to fetch email content from Resend Receiving API on attempt ${attempt} (retries exhausted)`, {
+            emailId,
+            attempt,
+            error: errorMsg,
+          });
+          return lastResult;
+        }
+
+        logger.warn(
+          `Failed to fetch email content from Resend Receiving API on attempt ${attempt} (${errorMsg}), retrying in ${RETRIEVAL_BACKOFF_MS}ms...`,
+          {
+            emailId,
+            attempt,
+            error: errorMsg,
+          },
+        );
       }
 
-      const rawJson = await response.json();
-      const parseResult = resendReceivingEmailSchema.safeParse(rawJson);
-      if (!parseResult.success) {
-        logger.warn('Resend Receiving API response validation failed', {
-          emailId,
-          issues: parseResult.error.issues.map((i) => i.message),
-        });
-        return null;
-      }
-
-      return {
-        text: parseResult.data.text ?? null,
-        html: parseResult.data.html ?? null,
-        subject: parseResult.data.subject ?? null,
-        headers: parseResult.data.headers,
-      };
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : String(err);
-      logger.warn('Failed to fetch email content from Resend Receiving API', {
-        emailId,
-        error: errorMsg,
-      });
-      return null;
+      // Backoff before retry
+      await new Promise((resolve) => setTimeout(resolve, RETRIEVAL_BACKOFF_MS));
     }
+
+    return lastResult;
   }
 
   async normalizeInboundPayload(payload: unknown): Promise<NormalizedInboundMessage[]> {
@@ -250,23 +336,24 @@ export class ResendEmailAdapter implements ChannelAdapter {
     let rfcMessageId: string | undefined;
     let inReplyTo: string | undefined;
     let references: string | undefined;
+    let contentFetchResult: ReceivedEmailContentResult | undefined;
 
     if (data.data.email_id) {
-      const remoteContent = await this.fetchReceivedEmailContent(data.data.email_id);
-      if (remoteContent) {
-        if (!body && remoteContent.text?.trim()) {
-          body = remoteContent.text.trim();
+      contentFetchResult = await this.fetchReceivedEmailContent(data.data.email_id);
+      if (contentFetchResult.fetchStatus === 'SUCCESS') {
+        if (!body && contentFetchResult.text?.trim()) {
+          body = contentFetchResult.text.trim();
         }
-        if (!html && remoteContent.html?.trim()) {
-          html = remoteContent.html.trim();
+        if (!html && contentFetchResult.html?.trim()) {
+          html = contentFetchResult.html.trim();
         }
-        if (remoteContent.subject?.trim()) {
-          subject = remoteContent.subject.trim();
+        if (contentFetchResult.subject?.trim()) {
+          subject = contentFetchResult.subject.trim();
         }
-        if (remoteContent.headers) {
-          rfcMessageId = getHeaderValue(remoteContent.headers, 'message-id');
-          inReplyTo = getHeaderValue(remoteContent.headers, 'in-reply-to');
-          references = getHeaderValue(remoteContent.headers, 'references');
+        if (contentFetchResult.headers) {
+          rfcMessageId = getHeaderValue(contentFetchResult.headers, 'message-id');
+          inReplyTo = getHeaderValue(contentFetchResult.headers, 'in-reply-to');
+          references = getHeaderValue(contentFetchResult.headers, 'references');
         }
       }
     }
@@ -278,8 +365,22 @@ export class ResendEmailAdapter implements ChannelAdapter {
         .replace(/\s+/g, ' ')
         .trim();
     }
-    if (!body && subject) {
-      body = `[Subject: ${subject}]`;
+    if (!body) {
+      if (contentFetchResult?.fetchStatus === 'FAILED') {
+        body = subject
+          ? `[Subject: ${subject}] (Email content retrieval pending)`
+          : '[Email content retrieval pending]';
+      } else if (subject) {
+        body = `[Subject: ${subject}]`;
+      }
+    }
+
+    const rawPayload = minimizeRawPayload(data);
+    if (contentFetchResult?.fetchStatus === 'FAILED') {
+      rawPayload['contentFetchStatus'] = 'FAILED';
+      if (contentFetchResult.statusCode !== undefined) {
+        rawPayload['statusCode'] = contentFetchResult.statusCode;
+      }
     }
 
     const timestamp = data.created_at ? new Date(data.created_at) : new Date();
@@ -296,7 +397,7 @@ export class ResendEmailAdapter implements ChannelAdapter {
         rfcMessageId: sanitizeHeader(rfcMessageId),
         inReplyTo: sanitizeHeader(inReplyTo),
         references: sanitizeHeader(references),
-        rawPayload: minimizeRawPayload(data),
+        rawPayload,
         timestamp,
       },
     ];

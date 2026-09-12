@@ -196,7 +196,7 @@ describe('Channel Adapters Unit Tests', () => {
       vi.unstubAllEnvs();
     });
 
-    it('should safely fall back to subject line when Receiving API returns non-200 status', async () => {
+    it('should safely fall back to subject line with pending indicator and FAILED metadata when Receiving API returns non-retryable 4xx status', async () => {
       const metadataOnlyPayload = {
         type: 'email.received',
         data: {
@@ -215,13 +215,16 @@ describe('Channel Adapters Unit Tests', () => {
 
       const messages = await resendEmailAdapter.normalizeInboundPayload(metadataOnlyPayload);
       expect(messages.length).toBe(1);
-      expect(messages[0]?.body).toBe('[Subject: Urgent consultation request]');
+      expect(messages[0]?.body).toBe('[Subject: Urgent consultation request] (Email content retrieval pending)');
+      expect(messages[0]?.rawPayload?.['contentFetchStatus']).toBe('FAILED');
+      expect(messages[0]?.rawPayload?.['statusCode']).toBe(404);
+      expect(fetchSpy).toHaveBeenCalledTimes(1); // Non-retryable 404 must NOT retry
 
       fetchSpy.mockRestore();
       vi.unstubAllEnvs();
     });
 
-    it('should safely fall back to subject line when Receiving API times out or throws a network error', async () => {
+    it('should safely fall back with pending indicator and FAILED metadata when Receiving API times out on both attempts', async () => {
       const metadataOnlyPayload = {
         type: 'email.received',
         data: {
@@ -235,17 +238,19 @@ describe('Channel Adapters Unit Tests', () => {
       vi.stubEnv('RESEND_API_KEY', 're_test_dummy_key_123');
       const fetchSpy = vi
         .spyOn(globalThis, 'fetch')
-        .mockRejectedValueOnce(new Error('The operation was aborted due to timeout'));
+        .mockRejectedValue(new Error('The operation was aborted due to timeout'));
 
       const messages = await resendEmailAdapter.normalizeInboundPayload(metadataOnlyPayload);
       expect(messages.length).toBe(1);
-      expect(messages[0]?.body).toBe('[Subject: Network failure fallback test]');
+      expect(messages[0]?.body).toBe('[Subject: Network failure fallback test] (Email content retrieval pending)');
+      expect(messages[0]?.rawPayload?.['contentFetchStatus']).toBe('FAILED');
+      expect(fetchSpy).toHaveBeenCalledTimes(2); // Retries on timeout
 
       fetchSpy.mockRestore();
       vi.unstubAllEnvs();
     });
 
-    it('should safely fall back to subject line when Receiving API returns invalid/unparseable schema', async () => {
+    it('should safely fall back with pending indicator when Receiving API returns invalid/unparseable schema', async () => {
       const metadataOnlyPayload = {
         type: 'email.received',
         data: {
@@ -268,7 +273,221 @@ describe('Channel Adapters Unit Tests', () => {
 
       const messages = await resendEmailAdapter.normalizeInboundPayload(metadataOnlyPayload);
       expect(messages.length).toBe(1);
-      expect(messages[0]?.body).toBe('[Subject: Malformed schema test]');
+      expect(messages[0]?.body).toBe('[Subject: Malformed schema test] (Email content retrieval pending)');
+      expect(messages[0]?.rawPayload?.['contentFetchStatus']).toBe('FAILED');
+      expect(messages[0]?.rawPayload?.['statusCode']).toBe(200);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+      fetchSpy.mockRestore();
+      vi.unstubAllEnvs();
+    });
+
+    it('should successfully fetch full email content on retry when attempt 1 returns 500 and attempt 2 returns 200 (Phase 6)', async () => {
+      const metadataOnlyPayload = {
+        type: 'email.received',
+        data: {
+          email_id: 'email_retry_500_success',
+          from: 'Client <client@example.com>',
+          to: ['emmanuel@frankedu-global.com'],
+          subject: 'Retry 500 test',
+        },
+      };
+
+      vi.stubEnv('RESEND_API_KEY', 're_test_dummy_key_123');
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 500,
+        } as unknown as Response)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            id: 'email_retry_500_success',
+            text: 'Recovered body after 500 error',
+            subject: 'Retry 500 test',
+            headers: {
+              'message-id': '<msg-500-retry@example.com>',
+            },
+          }),
+        } as unknown as Response);
+
+      const messages = await resendEmailAdapter.normalizeInboundPayload(metadataOnlyPayload);
+      expect(messages.length).toBe(1);
+      expect(messages[0]?.body).toBe('Recovered body after 500 error');
+      expect(messages[0]?.rfcMessageId).toBe('<msg-500-retry@example.com>');
+      expect(messages[0]?.rawPayload?.['contentFetchStatus']).toBeUndefined();
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+
+      fetchSpy.mockRestore();
+      vi.unstubAllEnvs();
+    });
+
+    it('should successfully fetch full email content on retry when attempt 1 returns 429 and attempt 2 returns 200 (Phase 6)', async () => {
+      const metadataOnlyPayload = {
+        type: 'email.received',
+        data: {
+          email_id: 'email_retry_429_success',
+          from: 'Client <client@example.com>',
+          to: ['emmanuel@frankedu-global.com'],
+          subject: 'Retry 429 test',
+        },
+      };
+
+      vi.stubEnv('RESEND_API_KEY', 're_test_dummy_key_123');
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 429,
+        } as unknown as Response)
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            id: 'email_retry_429_success',
+            text: 'Recovered body after rate limit',
+            subject: 'Retry 429 test',
+          }),
+        } as unknown as Response);
+
+      const messages = await resendEmailAdapter.normalizeInboundPayload(metadataOnlyPayload);
+      expect(messages.length).toBe(1);
+      expect(messages[0]?.body).toBe('Recovered body after rate limit');
+      expect(messages[0]?.rawPayload?.['contentFetchStatus']).toBeUndefined();
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+
+      fetchSpy.mockRestore();
+      vi.unstubAllEnvs();
+    });
+
+    it('should successfully fetch full email content on retry when attempt 1 times out and attempt 2 returns 200 (Phase 6)', async () => {
+      const metadataOnlyPayload = {
+        type: 'email.received',
+        data: {
+          email_id: 'email_retry_timeout_success',
+          from: 'Client <client@example.com>',
+          to: ['emmanuel@frankedu-global.com'],
+          subject: 'Retry timeout test',
+        },
+      };
+
+      vi.stubEnv('RESEND_API_KEY', 're_test_dummy_key_123');
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockRejectedValueOnce(new Error('The operation was aborted due to timeout'))
+        .mockResolvedValueOnce({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            id: 'email_retry_timeout_success',
+            text: 'Recovered body after initial timeout',
+            subject: 'Retry timeout test',
+          }),
+        } as unknown as Response);
+
+      const messages = await resendEmailAdapter.normalizeInboundPayload(metadataOnlyPayload);
+      expect(messages.length).toBe(1);
+      expect(messages[0]?.body).toBe('Recovered body after initial timeout');
+      expect(messages[0]?.rawPayload?.['contentFetchStatus']).toBeUndefined();
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+
+      fetchSpy.mockRestore();
+      vi.unstubAllEnvs();
+    });
+
+    it('should fail fast with exactly one fetch call when Receiving API returns 422 Unprocessable (Phase 6)', async () => {
+      const metadataOnlyPayload = {
+        type: 'email.received',
+        data: {
+          email_id: 'email_422_id',
+          from: 'Client <client@example.com>',
+          to: ['emmanuel@frankedu-global.com'],
+          subject: 'Unprocessable entity test',
+        },
+      };
+
+      vi.stubEnv('RESEND_API_KEY', 're_test_dummy_key_123');
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+        ok: false,
+        status: 422,
+      } as unknown as Response);
+
+      const messages = await resendEmailAdapter.normalizeInboundPayload(metadataOnlyPayload);
+      expect(messages.length).toBe(1);
+      expect(messages[0]?.body).toBe('[Subject: Unprocessable entity test] (Email content retrieval pending)');
+      expect(messages[0]?.rawPayload?.['contentFetchStatus']).toBe('FAILED');
+      expect(messages[0]?.rawPayload?.['statusCode']).toBe(422);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+      fetchSpy.mockRestore();
+      vi.unstubAllEnvs();
+    });
+
+    it('should gracefully fall back and tag FAILED metadata with statusCode 500 when persistent 500 exhausts retries (Phase 6)', async () => {
+      const metadataOnlyPayload = {
+        type: 'email.received',
+        data: {
+          email_id: 'email_persistent_500_id',
+          from: 'Client <client@example.com>',
+          to: ['emmanuel@frankedu-global.com'],
+          subject: 'Persistent 500 failure test',
+        },
+      };
+
+      vi.stubEnv('RESEND_API_KEY', 're_test_dummy_key_123');
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 500,
+        } as unknown as Response)
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 500,
+        } as unknown as Response);
+
+      const messages = await resendEmailAdapter.normalizeInboundPayload(metadataOnlyPayload);
+      expect(messages.length).toBe(1);
+      expect(messages[0]?.body).toBe('[Subject: Persistent 500 failure test] (Email content retrieval pending)');
+      expect(messages[0]?.rawPayload?.['contentFetchStatus']).toBe('FAILED');
+      expect(messages[0]?.rawPayload?.['statusCode']).toBe(500);
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+
+      fetchSpy.mockRestore();
+      vi.unstubAllEnvs();
+    });
+
+    it('should gracefully fall back and tag statusCode 429 when persistent rate limit exhausts retries (Phase 6)', async () => {
+      const metadataOnlyPayload = {
+        type: 'email.received',
+        data: {
+          email_id: 'email_persistent_429_id',
+          from: 'Client <client@example.com>',
+          to: ['emmanuel@frankedu-global.com'],
+          subject: 'Persistent 429 failure test',
+        },
+      };
+
+      vi.stubEnv('RESEND_API_KEY', 're_test_dummy_key_123');
+      const fetchSpy = vi
+        .spyOn(globalThis, 'fetch')
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 429,
+        } as unknown as Response)
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 429,
+        } as unknown as Response);
+
+      const messages = await resendEmailAdapter.normalizeInboundPayload(metadataOnlyPayload);
+      expect(messages.length).toBe(1);
+      expect(messages[0]?.body).toBe('[Subject: Persistent 429 failure test] (Email content retrieval pending)');
+      expect(messages[0]?.rawPayload?.['contentFetchStatus']).toBe('FAILED');
+      expect(messages[0]?.rawPayload?.['statusCode']).toBe(429);
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
 
       fetchSpy.mockRestore();
       vi.unstubAllEnvs();
