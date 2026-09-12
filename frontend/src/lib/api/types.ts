@@ -111,6 +111,7 @@ export interface Message {
   direction: MessageDirection;
   status: MessageStatus;
   body: string;
+  senderName?: string | null;
   subject?: string | null;
   rfcMessageId?: string | null;
   inReplyTo?: string | null;

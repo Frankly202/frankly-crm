@@ -163,6 +163,7 @@ model Message {
   status              MessageStatus    @default(RECEIVED)
   body                String
   senderIdentifier    String
+  senderName          String?
   recipientIdentifier String
   externalMessageId   String?          @unique
   idempotencyKey      String?          @unique

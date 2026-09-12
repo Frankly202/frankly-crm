@@ -1945,6 +1945,9 @@ components:
           type: string
         senderIdentifier:
           type: string
+        senderName:
+          type: string
+          nullable: true
         recipientIdentifier:
           type: string
         externalMessageId:

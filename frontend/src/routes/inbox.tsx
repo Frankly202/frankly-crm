@@ -502,6 +502,14 @@ function InboxPage() {
                               isInbound ? "pl-9" : "pr-1",
                             )}
                           >
+                            {isInbound && msg.senderName && (
+                              <>
+                                <span className="font-medium text-foreground/80">
+                                  {msg.senderName}
+                                </span>
+                                <span>&middot;</span>
+                              </>
+                            )}
                             <span>{formatTime(msg.createdAt)}</span>
                             <span>&middot;</span>
                             <span>{formatDate(msg.createdAt)}</span>

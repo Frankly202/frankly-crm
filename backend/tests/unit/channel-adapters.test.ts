@@ -369,6 +369,61 @@ describe('Channel Adapters Unit Tests', () => {
       env.EMAIL_REPLY_TO = origReplyTo;
       vi.unstubAllEnvs();
     });
+
+    it('should truncate oversized email body exceeding 250KB limit and append notice (Phase 3)', async () => {
+      const hugeText = 'A'.repeat(300_000);
+      const hugeEmailPayload = {
+        type: 'email.received',
+        created_at: new Date().toISOString(),
+        data: {
+          email_id: 'huge_email_123',
+          from: 'Huge Sender <huge@example.com>',
+          to: ['inbox@frankedu-global.com'],
+          subject: 'Huge Email Payload',
+          text: hugeText,
+        },
+      };
+
+      const normalized = await resendEmailAdapter.normalizeInboundPayload(hugeEmailPayload);
+      expect(normalized.length).toBe(1);
+
+      const msg = normalized[0]!;
+      expect(msg.body.length).toBe(250_000 + '\n\n[Message body truncated: content exceeded 250KB display limit]'.length);
+      expect(msg.body.endsWith('[Message body truncated: content exceeded 250KB display limit]')).toBe(true);
+      expect(msg.body.startsWith('AAAAA')).toBe(true);
+      expect(msg.senderName).toBe('Huge Sender');
+    });
+
+    it('should minimize rawPayload by removing redundant HTML content while preserving envelope (Phase 3)', async () => {
+      const payloadWithHtml = {
+        type: 'email.received',
+        created_at: new Date().toISOString(),
+        data: {
+          email_id: 'html_email_456',
+          from: 'Alice Smith <alice@example.com>',
+          to: ['inbox@frankedu-global.com'],
+          subject: 'HTML Newsletter',
+          text: 'Plain text preview',
+          html: '<div>' + '<p>Heavy HTML content</p>'.repeat(1000) + '</div>',
+          rawHtml: '<html>...</html>',
+        },
+      };
+
+      const normalized = await resendEmailAdapter.normalizeInboundPayload(payloadWithHtml);
+      expect(normalized.length).toBe(1);
+
+      const msg = normalized[0]!;
+      expect(msg.senderName).toBe('Alice Smith');
+      expect(msg.body).toBe('Plain text preview');
+
+      const rawData = (msg.rawPayload as { data?: Record<string, unknown> }).data;
+      expect(rawData).toBeDefined();
+      expect(rawData?.['html']).toBeUndefined();
+      expect(rawData?.['rawHtml']).toBeUndefined();
+      expect(rawData?.['email_id']).toBe('html_email_456');
+      expect(rawData?.['from']).toBe('Alice Smith <alice@example.com>');
+      expect(rawData?.['subject']).toBe('HTML Newsletter');
+    });
   });
 
   describe('WebsiteFormAdapter', () => {

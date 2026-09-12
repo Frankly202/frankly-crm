@@ -310,6 +310,7 @@ export class WebhookService {
             inReplyTo: inbound.inReplyTo,
             references: inbound.references,
             senderIdentifier: inbound.senderIdentifier,
+            senderName: inbound.senderName,
             recipientIdentifier: inbound.recipientIdentifier,
             externalMessageId: inbound.externalMessageId,
             rawPayload: inbound.rawPayload as Prisma.InputJsonValue,

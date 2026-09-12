@@ -43,6 +43,32 @@ function sanitizeHeader(val: string | undefined): string | undefined {
   return val.replace(/[\r\n]+/g, ' ').trim();
 }
 
+export const MAX_EMAIL_BODY_LENGTH = 250_000;
+export const BODY_TRUNCATION_NOTICE = '\n\n[Message body truncated: content exceeded 250KB display limit]';
+
+export function applySafeBodyLimit(body: string): string {
+  if (body.length > MAX_EMAIL_BODY_LENGTH) {
+    return body.slice(0, MAX_EMAIL_BODY_LENGTH) + BODY_TRUNCATION_NOTICE;
+  }
+  return body;
+}
+
+export function minimizeRawPayload(payload: unknown): Record<string, unknown> {
+  if (!payload || typeof payload !== 'object') {
+    return {};
+  }
+  const sanitized = JSON.parse(JSON.stringify(payload)) as Record<string, unknown>;
+  if ('rawHtml' in sanitized) {
+    delete sanitized['rawHtml'];
+  }
+  if (sanitized['data'] && typeof sanitized['data'] === 'object' && sanitized['data'] !== null) {
+    const dataObj = sanitized['data'] as Record<string, unknown>;
+    delete dataObj['html'];
+    delete dataObj['rawHtml'];
+  }
+  return sanitized;
+}
+
 interface ResendEmailPayload {
   type?: string;
   created_at?: string;
@@ -265,12 +291,12 @@ export class ResendEmailAdapter implements ChannelAdapter {
         senderIdentifier,
         senderName,
         recipientIdentifier,
-        body,
+        body: applySafeBodyLimit(body),
         subject: sanitizeHeader(subject),
         rfcMessageId: sanitizeHeader(rfcMessageId),
         inReplyTo: sanitizeHeader(inReplyTo),
         references: sanitizeHeader(references),
-        rawPayload: data as unknown as Record<string, unknown>,
+        rawPayload: minimizeRawPayload(data),
         timestamp,
       },
     ];

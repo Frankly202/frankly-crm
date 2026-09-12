@@ -57,6 +57,7 @@ const mockMessages: Message[] = [
     direction: "INBOUND",
     status: "RECEIVED",
     body: "Hello, I am inquiring about European University Cyprus programs.",
+    senderName: "Elena Georgiou",
     createdAt: "2026-08-01T10:00:00Z",
   },
   {
@@ -214,6 +215,8 @@ describe("Unified Inbox Route Component", () => {
     expect(
       screen.getAllByText(/Hello, I am inquiring about European University Cyprus/i).length,
     ).toBeGreaterThanOrEqual(1);
+    // Inbound message sender name
+    expect(screen.getAllByText("Elena Georgiou").length).toBeGreaterThanOrEqual(2);
     // Outbound message
     expect(
       screen.getAllByText(/Hi Elena, we offer full guidance on enrollment/i).length,
