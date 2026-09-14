@@ -38,6 +38,7 @@ export const envSchema = z
       .regex(/^v[0-9]+(\.[0-9]+)?$/)
       .default('v26.0'),
     META_APP_ID: z.string().optional(),
+    WHATSAPP_BUSINESS_ACCOUNT_ID: z.string().optional(),
     WHATSAPP_PHONE_NUMBER_ID: z.string().optional(),
     WHATSAPP_ACCESS_TOKEN: z.string().optional(),
     INSTAGRAM_PAGE_ID: z.string().optional(),

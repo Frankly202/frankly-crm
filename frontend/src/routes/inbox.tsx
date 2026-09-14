@@ -1,5 +1,6 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import {
+  AlertTriangle,
   ArrowLeft,
   Check,
   CheckCheck,
@@ -15,6 +16,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { ApiError } from "@/lib/api/client";
 import { AppShell } from "@/components/layout/AppShell";
 import { CategoryBadge, ChannelBadge, StatusBadge } from "@/components/crm/badges";
 import { ComposeEmailDialog } from "@/components/crm/ComposeEmailDialog";
@@ -177,9 +179,24 @@ function InboxPage() {
         description: `Delivered to thread ${convDetail?.channelThreadId ?? ""}`,
       });
     } catch (err) {
-      toast.error("Failed to send message", {
-        description: err instanceof Error ? err.message : "Network error",
-      });
+      if (err instanceof ApiError && err.code === "WHATSAPP_WINDOW_EXPIRED") {
+        toast.error("24-Hour WhatsApp Window Expired", {
+          description:
+            "Free-form replies cannot be sent because >24h elapsed since customer's last message. An approved template is required.",
+        });
+      } else if (err instanceof ApiError && err.code === "WHATSAPP_RECIPIENT_NOT_ON_WHATSAPP") {
+        toast.error("Recipient Not on WhatsApp", {
+          description: "This phone number is not registered as a WhatsApp user.",
+        });
+      } else if (err instanceof ApiError && err.code === "WHATSAPP_RATE_LIMIT_EXCEEDED") {
+        toast.error("Rate Limit Exceeded", {
+          description: "WhatsApp API throughput limit reached. Please wait a moment.",
+        });
+      } else {
+        toast.error("Failed to send message", {
+          description: err instanceof Error ? err.message : "Network error",
+        });
+      }
     }
   }
 
@@ -567,6 +584,27 @@ function InboxPage() {
 
               {/* Reply Composer */}
               <div className="border-t border-border bg-card p-3 sm:p-4">
+                {convDetail.channel === "WHATSAPP" &&
+                  convDetail.messagingWindow &&
+                  !convDetail.messagingWindow.isOpen && (
+                    <div
+                      data-testid="whatsapp-window-expired-banner"
+                      className="mb-2.5 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs text-amber-800 dark:text-amber-300"
+                    >
+                      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                      <div className="flex-1 leading-snug">
+                        <span className="font-semibold">
+                          WhatsApp 24h Customer Service Window Expired.
+                        </span>{" "}
+                        <span>
+                          More than 24 hours have passed since the customer's last message.
+                          Free-form replies will fail until the customer reaches out again or a
+                          template is sent.
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
                 <form onSubmit={handleSendReply} className="space-y-2">
                   <div className="relative">
                     <Textarea
@@ -592,12 +630,22 @@ function InboxPage() {
                     </Button>
                   </div>
                   <div className="flex items-center justify-between px-1 text-[11px] text-muted-foreground">
-                    <span>
-                      Channel:{" "}
-                      <span className="font-medium text-foreground">
-                        {CHANNEL_LABELS[convDetail.channel]}
+                    <div className="flex items-center gap-2">
+                      <span>
+                        Channel:{" "}
+                        <span className="font-medium text-foreground">
+                          {CHANNEL_LABELS[convDetail.channel]}
+                        </span>
                       </span>
-                    </span>
+                      {convDetail.channel === "WHATSAPP" && convDetail.messagingWindow?.isOpen && (
+                        <span
+                          data-testid="whatsapp-window-active"
+                          className="inline-flex items-center gap-1 font-medium text-emerald-600 dark:text-emerald-400"
+                        >
+                          &middot; 24h window active
+                        </span>
+                      )}
+                    </div>
                     <span>Enter to send &middot; Shift + Enter for newline</span>
                   </div>
                 </form>

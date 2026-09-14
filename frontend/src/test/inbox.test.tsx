@@ -2,6 +2,8 @@ import React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { toast } from "sonner";
+import { ApiError } from "@/lib/api/client";
 import type { Conversation, ConversationDetail, Message } from "@/lib/api/types";
 
 const mockNavigate = vi.fn();
@@ -122,6 +124,11 @@ const mockConversations: Conversation[] = [
 const mockDetail: ConversationDetail = {
   ...mockConversations[0]!,
   messages: mockMessages,
+  messagingWindow: {
+    isOpen: true,
+    expiresAt: "2026-08-03T12:00:00Z",
+    latestInboundTimestamp: "2026-08-02T12:00:00Z",
+  },
 };
 
 const mockMutateSendMessage = vi.fn().mockResolvedValue({ id: "msg-new" });
@@ -270,5 +277,62 @@ describe("Unified Inbox Route Component", () => {
     // Default selected is cv-001 (Elena Georgiou)
     expect(screen.getAllByText("Elena Georgiou").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText(/Thread: \+35799123456/i)).toBeDefined();
+  });
+
+  it("should render WhatsApp 24h window active status indicator when window is open", () => {
+    mockSearch = { conversationId: "cv-001" };
+    mockDetail.messagingWindow = {
+      isOpen: true,
+      expiresAt: "2026-08-03T12:00:00Z",
+      latestInboundTimestamp: "2026-08-02T12:00:00Z",
+    };
+
+    const Component = (Route as unknown as { component: React.ComponentType }).component;
+    renderWithClient(<Component />);
+
+    expect(screen.getByTestId("whatsapp-window-active")).toBeDefined();
+    expect(screen.getByText(/24h window active/i)).toBeDefined();
+  });
+
+  it("should render WhatsApp 24h window expired banner when window is closed", () => {
+    mockSearch = { conversationId: "cv-001" };
+    mockDetail.messagingWindow = {
+      isOpen: false,
+      expiresAt: "2026-08-02T12:00:00Z",
+      latestInboundTimestamp: "2026-08-01T12:00:00Z",
+    };
+
+    const Component = (Route as unknown as { component: React.ComponentType }).component;
+    renderWithClient(<Component />);
+
+    expect(screen.getByTestId("whatsapp-window-expired-banner")).toBeDefined();
+    expect(screen.getByText(/WhatsApp 24h Customer Service Window Expired/i)).toBeDefined();
+  });
+
+  it("should display dedicated toast when reply fails with WHATSAPP_WINDOW_EXPIRED", async () => {
+    const errorSpy = vi.spyOn(toast, "error");
+    mockMutateSendMessage.mockRejectedValueOnce(
+      new ApiError(422, "WHATSAPP_WINDOW_EXPIRED", "Window expired (>24h)"),
+    );
+
+    mockSearch = { conversationId: "cv-001" };
+    const Component = (Route as unknown as { component: React.ComponentType }).component;
+    renderWithClient(<Component />);
+
+    const textarea = screen.getByPlaceholderText(/Reply via WhatsApp/i);
+    await React.act(async () => {
+      fireEvent.change(textarea, {
+        target: { value: "Reply outside window" },
+      });
+      const sendBtn = screen.getByRole("button", { name: "Send reply" });
+      fireEvent.click(sendBtn);
+    });
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      "24-Hour WhatsApp Window Expired",
+      expect.objectContaining({
+        description: expect.stringContaining("Free-form replies cannot be sent"),
+      }),
+    );
   });
 });

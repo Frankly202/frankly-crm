@@ -319,52 +319,71 @@ Establish a centralized, hardened webhook ingress layer for all Meta webhooks (`
 
 ### Phase 2: WhatsApp Business Cloud API Live Integration
 
+> **Status:** `[COMPLETED — ENGINE & 24H WINDOW ENFORCEMENT; LIVE META SEND PENDING FRANK'S CREDENTIALS]`  
+> **Execution Date:** 2026-09-14  
+> **Schema Migration:** None required.
+
 #### 1. Objective
-Enable reliable two-way WhatsApp communication via Meta Cloud API v26.0+, correctly formatting outbound payloads, capturing WhatsApp Message IDs (`wamid`), enforcing the 24-hour customer service window, and cleanly handling template vs free-form messaging rules.
+Enable reliable two-way WhatsApp communication via Meta Cloud API v26.0+, correctly formatting outbound payloads, capturing WhatsApp Message IDs (`wamid`), enforcing the 24-hour customer service window, preserving inbound media captions, validating webhook tenant accounts, and exposing messaging window status directly to the Inbox.
 
-#### 2. Policy Verification Task
-- **Verify before coding:** Check current Meta documentation for WhatsApp Cloud API v26.0: confirm conversation-based pricing tier, utility vs marketing template rules, and verify that free-form messages within 24 hours of customer inbound require no template.
+#### 2. Policy Verification Task (Verified)
+- **Official Meta Cloud API Documentation Verified:**
+  - Graph API messages endpoint: `POST https://graph.facebook.com/v26.0/{phone-number-id}/messages`.
+  - 24-Hour Customer Service Window: Opened strictly by customer inbound messages (`messages[].timestamp`). Outbound messages, delivery events, and read receipts do not extend the window.
+  - Expired window returns Meta error code `131047` (subcode `2494010`).
+  - Outside the 24h window, free-form text is rejected and approved templates are required.
+  - Recipient phone formatting: digits only in international format without `+` (e.g. `35799445566`).
 
-#### 3. Scope & Deliverables
-- **Live Outbound Dispatcher:** Enhance `WhatsAppAdapter.sendOutboundMessage` to handle Graph API v26.0 responses, error codes, and phone number normalization.
-- **24-Hour Window Enforcement:** Detect when customer's last inbound message was >24 hours ago. If expired, reject free-form outbound sends with an explicit CRM error: `WHATSAPP_WINDOW_EXPIRED`.
-- **E.164 Number Normalization:** Ensure recipient phone numbers are stripped of non-digits before calling Meta (`to: "35799445566"`), while preserving E.164 (`+35799445566`) in Frankly CRM's database.
-- **Error Code Normalization:** Map Meta error code `131047` ("Re-engagement message") and `131026` ("Message undeliverable") to structured application errors.
-
-#### 4. Dependencies
-- Phase 0 completed (WABA, Phone Number ID, test numbers registered).
-- Phase 1 completed (Hardened signature verification and status receipt pipeline).
-
-#### 5. Implementation Tasks
-1. Update `backend/src/modules/webhooks/adapters/whatsapp.adapter.ts`:
-   - Normalize recipient phone numbers: strip leading `+` and non-numeric characters for Meta API body.
-   - Refactor `sendOutboundMessage` with Graph API v26.0 request payload:
-     ```json
-     {
-       "messaging_product": "whatsapp",
-       "recipient_type": "individual",
-       "to": "35799445566",
-       "type": "text",
-       "text": { "preview_url": false, "body": "..." }
-     }
-     ```
-   - Parse error subcodes (`131047`, `131026`, `130429` rate limit) and throw descriptive `BadGatewayError` or `AppError`.
-2. Update `backend/src/modules/conversations/conversation.service.ts`:
-   - Before dispatching outbound WhatsApp message, query the most recent inbound message for the conversation.
-   - If `Date.now() - latestInbound.createdAt > 24 * 60 * 60 * 1000`, flag that free-form messaging is closed.
-3. Update `backend/src/config/env.ts`:
-   - Add `WHATSAPP_BUSINESS_ACCOUNT_ID` to Zod schema.
-
-#### 6. Validation Gates
+#### 3. Scope & Deliverables Completed
+- **Environment & Canonical Configuration:**
+  - Added `WHATSAPP_BUSINESS_ACCOUNT_ID: z.string().optional()` to [env.ts](file:///Users/abrahamogbu/Developer/frankly-crm/backend/src/config/env.ts).
+  - Confirmed `WHATSAPP_ACCESS_TOKEN` as the single canonical token variable across backend and `.env.example`.
+- **Tenant & Account Webhook Filtering:**
+  - Updated [whatsapp.adapter.ts](file:///Users/abrahamogbu/Developer/frankly-crm/backend/src/modules/webhooks/adapters/whatsapp.adapter.ts) to filter incoming entries by `WHATSAPP_BUSINESS_ACCOUNT_ID` and phone changes by `WHATSAPP_PHONE_NUMBER_ID` when configured.
+- **Inbound Media Caption Preservation:**
+  - Enhanced `normalizeInboundPayload` in [whatsapp.adapter.ts](file:///Users/abrahamogbu/Developer/frankly-crm/backend/src/modules/webhooks/adapters/whatsapp.adapter.ts) to extract captions for `image`, `video`, `document`, `audio`, and `location` message types so customer typed context is preserved in the CRM message body.
+- **Centralized Meta Graph API Error & Subcode Normalizer:**
+  - Implemented `parseMetaGraphError` in [whatsapp.adapter.ts](file:///Users/abrahamogbu/Developer/frankly-crm/backend/src/modules/webhooks/adapters/whatsapp.adapter.ts):
+    - `131047` / `2494010` -> `WHATSAPP_WINDOW_EXPIRED` (HTTP 422)
+    - `131026` -> `WHATSAPP_RECIPIENT_NOT_ON_WHATSAPP` (HTTP 422)
+    - `130429` / `80007` / `429` -> `WHATSAPP_RATE_LIMIT_EXCEEDED` (HTTP 429)
+    - `190` / `401` -> `BadGatewayError` (Meta system user access token expired)
+    - `131042` -> `BadGatewayError` (WABA payment issue)
+    - `100` -> `BadRequestError` (HTTP 400)
+- **24-Hour Customer Service Window Enforcement:**
+  - Updated `ConversationService.sendOutboundMessage` in [conversation.service.ts](file:///Users/abrahamogbu/Developer/frankly-crm/backend/src/modules/conversations/conversation.service.ts):
+    - Queries the customer's latest inbound message for the conversation.
+    - Inspects the provider timestamp (`rawPayload.timestamp` / `createdAt`).
+    - Throws `UnprocessableEntityError('Customer service window expired (>24h)...', 'WHATSAPP_WINDOW_EXPIRED')` before calling Meta API if >24h elapsed or if no customer inbound message exists.
+    - Ensures outbound, delivery, or read events never extend the customer service window.
+  - Updated `ConversationService.getConversationById` to expose `messagingWindow: { isOpen: boolean, expiresAt: string | null, latestInboundTimestamp: string | null }`.
+- **Frontend Inbox Integration & User Guidance:**
+  - Updated [types.ts](file:///Users/abrahamogbu/Developer/frankly-crm/frontend/src/lib/api/types.ts) with `MessagingWindowState`.
+  - Updated [inbox.tsx](file:///Users/abrahamogbu/Developer/frankly-crm/frontend/src/routes/inbox.tsx):
+    - Displays an amber warning banner above the composer when the 24h WhatsApp window is expired.
+    - Shows an active window indicator in the composer footer when the 24h window is open.
+    - Surfaces specialized toast error messages when `WHATSAPP_WINDOW_EXPIRED`, `WHATSAPP_RECIPIENT_NOT_ON_WHATSAPP`, or `WHATSAPP_RATE_LIMIT_EXCEEDED` occurs.
 - **Automated Tests:**
-  - Mocked and Live mode tests for `WhatsAppAdapter`.
-  - Verify phone number formatting with international numbers (e.g. Cyprus `+357...`, UK `+44...`, Nigeria `+234...`).
-  - Unit test for 24-hour customer service window expiration check.
-- **Manual Verification (Meta Test Phone Number):**
-  - Send message from real WhatsApp mobile app to Meta test phone number.
-  - Verify message appears in Frankly CRM Inbox within 15s polling window.
-  - Reply from Frankly CRM Inbox and verify receipt on physical WhatsApp mobile device.
-  - Verify single check (`SENT`) changes to double check (`DELIVERED`) upon message delivery.
+  - Created [whatsapp-adapter.test.ts](file:///Users/abrahamogbu/Developer/frankly-crm/backend/tests/unit/whatsapp-adapter.test.ts) covering error mappings, media captions, tenant filtering, and mock vs live mode fail-closed behavior.
+  - Created [whatsapp-messaging-window.test.ts](file:///Users/abrahamogbu/Developer/frankly-crm/backend/tests/integration/whatsapp-messaging-window.test.ts) testing active window delivery, expired window 422 rejection, cold outbound rejection, non-extension from outbound messages, and `getConversationById` window state.
+  - Updated [inbox.test.tsx](file:///Users/abrahamogbu/Developer/frankly-crm/frontend/src/test/inbox.test.tsx) testing expired window banner, active window indicator, and error toast handling.
+
+#### 4. Validation Results
+- **Backend Unit Tests:** 20/20 files passed, 157/157 tests passed (`npm --prefix backend run test:unit`).
+- **Backend Integration Tests:** 14/14 files passed, 123/123 tests passed (`npm --prefix backend run test:integration` against isolated `frankly_crm_test`).
+- **Backend Typecheck:** Clean (`tsc --noEmit` exited 0).
+- **Backend Lint:** Clean (`eslint .` exited 0).
+- **Backend Build:** Clean (`npm --prefix backend run build` exited 0).
+- **Frontend Tests:** 7/7 files passed, 48/48 tests passed (`npm --prefix frontend run test`).
+- **Frontend Lint:** Clean (`eslint .` exited 0).
+- **Frontend Build:** Clean (`npm --prefix frontend run build` exited 0).
+- **Production Safety:** Zero production DB connections, provider calls, migrations, or secret exposures.
+
+#### 5. Remaining Live Meta Dependencies (Frank)
+- Permanent System User Access Token (`WHATSAPP_ACCESS_TOKEN`).
+- WhatsApp Business Account ID (`WHATSAPP_BUSINESS_ACCOUNT_ID`).
+- Phone Number ID (`WHATSAPP_PHONE_NUMBER_ID`).
+- Registering Webhook URL in Meta App Dashboard pointing to `/api/v1/webhooks/whatsapp`.
 
 ---
 

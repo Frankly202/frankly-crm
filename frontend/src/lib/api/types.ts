@@ -151,8 +151,15 @@ export interface Conversation {
     Pick<Message, "id" | "direction" | "status" | "body" | "createdAt"> | null | undefined;
 }
 
+export interface MessagingWindowState {
+  isOpen: boolean;
+  expiresAt: string | null;
+  latestInboundTimestamp: string | null;
+}
+
 export interface ConversationDetail extends Conversation {
   messages: Message[];
+  messagingWindow?: MessagingWindowState | null | undefined;
 }
 
 export interface DashboardMetrics {

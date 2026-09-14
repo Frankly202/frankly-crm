@@ -1,6 +1,6 @@
 import crypto from 'crypto';
 import { prisma } from '../../config/database.js';
-import { NotFoundError, BadRequestError } from '../../common/errors/app-error.js';
+import { NotFoundError, BadRequestError, UnprocessableEntityError } from '../../common/errors/app-error.js';
 import {
   ConversationQueryInput,
   SendOutboundMessageInput,
@@ -334,9 +334,47 @@ export class ConversationService {
       !conversation.lastReadAt ||
       conversation.lastMessageAt.getTime() > conversation.lastReadAt.getTime();
 
+    let messagingWindow: {
+      isOpen: boolean;
+      expiresAt: string | null;
+      latestInboundTimestamp: string | null;
+    } | null = null;
+
+    if (conversation.channel === ChannelType.WHATSAPP) {
+      const inboundMessages = conversation.messages.filter(
+        (m) => m.direction === MessageDirection.INBOUND,
+      );
+      const latestInbound =
+        inboundMessages.length > 0 ? inboundMessages[inboundMessages.length - 1] : null;
+
+      if (latestInbound) {
+        let providerDate: Date = latestInbound.createdAt;
+        const raw = latestInbound.rawPayload as Record<string, unknown> | null;
+        if (raw && typeof raw['timestamp'] === 'string' && /^\d+$/.test(raw['timestamp'])) {
+          providerDate = new Date(parseInt(raw['timestamp'], 10) * 1000);
+        } else if (raw && typeof raw['timestamp'] === 'number') {
+          providerDate = new Date(raw['timestamp'] * 1000);
+        }
+        const expiresMs = providerDate.getTime() + 24 * 60 * 60 * 1000;
+        const isOpen = Date.now() < expiresMs;
+        messagingWindow = {
+          isOpen,
+          expiresAt: new Date(expiresMs).toISOString(),
+          latestInboundTimestamp: providerDate.toISOString(),
+        };
+      } else {
+        messagingWindow = {
+          isOpen: false,
+          expiresAt: null,
+          latestInboundTimestamp: null,
+        };
+      }
+    }
+
     return {
       ...conversation,
       isUnread,
+      messagingWindow,
     };
   }
 
@@ -355,6 +393,49 @@ export class ConversationService {
 
     if (!conversation) {
       throw new NotFoundError(`Conversation with ID ${conversationId} not found`);
+    }
+
+    // Enforce WhatsApp 24-hour customer service window
+    if (conversation.channel === ChannelType.WHATSAPP) {
+      const latestInboundMessage = await prisma.message.findFirst({
+        where: {
+          conversationId,
+          direction: MessageDirection.INBOUND,
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      let providerDate: Date | null = null;
+      if (latestInboundMessage) {
+        const raw = latestInboundMessage.rawPayload as Record<string, unknown> | null;
+        if (raw && typeof raw['timestamp'] === 'string' && /^\d+$/.test(raw['timestamp'])) {
+          providerDate = new Date(parseInt(raw['timestamp'], 10) * 1000);
+        } else if (raw && typeof raw['timestamp'] === 'number') {
+          providerDate = new Date(raw['timestamp'] * 1000);
+        } else {
+          providerDate = latestInboundMessage.createdAt;
+        }
+      }
+
+      const WINDOW_DURATION_MS = 24 * 60 * 60 * 1000;
+      const isWindowOpen = providerDate
+        ? Date.now() - providerDate.getTime() <= WINDOW_DURATION_MS
+        : false;
+
+      if (!isWindowOpen) {
+        const expiresAt = providerDate
+          ? new Date(providerDate.getTime() + WINDOW_DURATION_MS).toISOString()
+          : null;
+        throw new UnprocessableEntityError(
+          'Customer service window expired (>24h). WhatsApp requires an approved template message to contact or re-engage customers.',
+          'WHATSAPP_WINDOW_EXPIRED',
+          {
+            channel: ChannelType.WHATSAPP,
+            windowExpiresAt: expiresAt,
+            latestInboundTimestamp: providerDate ? providerDate.toISOString() : null,
+          },
+        );
+      }
     }
 
     // Determine target recipient identifier based on channel
