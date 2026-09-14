@@ -22,12 +22,27 @@ router.post('/instagram', (req, res, next) =>
   webhookController.handleInbound(req, res, next, ChannelType.INSTAGRAM),
 );
 
-// 3. Resend Inbound Email Webhook
+// 3. Facebook Page Messenger Webhook Routes (Meta Page Subscription)
+router.get('/messenger', (req, res, next) =>
+  webhookController.verifyMetaChallenge(req, res, next),
+);
+router.post('/messenger', (_req, res) => {
+  res.status(501).json({
+    success: false,
+    error: {
+      code: 'CHANNEL_NOT_YET_ENABLED',
+      message: 'Facebook Messenger message ingestion is scheduled for Phase 4',
+    },
+  });
+});
+
+// 4. Resend Inbound Email Webhook
 router.post('/resend', (req, res, next) =>
   webhookController.handleInbound(req, res, next, ChannelType.RESEND_EMAIL),
 );
 
-// 4. Website Enquiry Form Webhook (Public CORS enabled + Honeypot & Rate limiting)
+// 5. Website Enquiry Form Webhook (Public CORS enabled + Honeypot & Rate limiting)
+
 router.post(
   '/website',
   cors(),

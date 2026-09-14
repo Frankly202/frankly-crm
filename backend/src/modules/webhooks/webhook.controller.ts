@@ -2,12 +2,12 @@ import { Request, Response, NextFunction } from 'express';
 import { ChannelType } from '@prisma/client';
 import { getChannelAdapter } from './adapters/channel-registry.js';
 import { webhookService } from './webhook.service.js';
-import { UnauthorizedError, BadRequestError } from '../../common/errors/app-error.js';
-import { env } from '../../config/env.js';
+import { UnauthorizedError } from '../../common/errors/app-error.js';
+import { verifyMetaChallengeToken } from './utils/meta-signature.util.js';
 
 export class WebhookController {
   /**
-   * Meta challenge verification for WhatsApp and Instagram.
+   * Meta challenge verification for WhatsApp, Instagram, and Messenger.
    */
   async verifyMetaChallenge(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
@@ -15,27 +15,8 @@ export class WebhookController {
       const token = req.query['hub.verify_token'];
       const challenge = req.query['hub.challenge'];
 
-      if (mode === 'subscribe') {
-        const configuredToken = process.env['META_VERIFY_TOKEN'] || env.META_VERIFY_TOKEN;
-
-        // Fail closed if token is not configured in production
-        if (env.NODE_ENV === 'production' && !configuredToken) {
-          throw new UnauthorizedError('Webhook verification token is not configured');
-        }
-
-        if (configuredToken && token !== configuredToken) {
-          throw new UnauthorizedError('Invalid webhook verification token');
-        }
-
-        if (!configuredToken && token !== 'frankly_test_verify_token') {
-          throw new UnauthorizedError('Invalid verification token');
-        }
-
-        res.status(200).send(challenge);
-        return;
-      }
-
-      throw new BadRequestError('Invalid verification mode');
+      const verifiedChallenge = verifyMetaChallengeToken(mode, token, challenge);
+      res.status(200).send(verifiedChallenge);
     } catch (error) {
       next(error);
     }
@@ -43,6 +24,7 @@ export class WebhookController {
 
   /**
    * Unified inbound webhook handler for all channels.
+   * Processes both inbound messages and asynchronous status receipts (sent/delivered/read/failed).
    */
   async handleInbound(
     req: Request,
@@ -59,14 +41,30 @@ export class WebhookController {
         throw new UnauthorizedError(`Invalid webhook signature for channel ${channel}`);
       }
 
-      // Normalize inbound payload into common structure
-      const normalizedMessages = await adapter.normalizeInboundPayload(req.body);
+      // Process status updates (e.g. Meta delivered, read, failed status callbacks)
+      const statusUpdates = adapter.normalizeStatusUpdates
+        ? await adapter.normalizeStatusUpdates(req.body)
+        : [];
 
-      // Ingest each message through the domain pipeline
-      const results = [];
+      const statusResults = [];
+      for (const update of statusUpdates) {
+        const updatedMsg = await webhookService.updateMessageStatus(update);
+        if (updatedMsg) {
+          statusResults.push({
+            messageId: updatedMsg.id,
+            externalMessageId: updatedMsg.externalMessageId,
+            status: updatedMsg.status,
+            rawStatus: update.rawStatus,
+          });
+        }
+      }
+
+      // Normalize and ingest inbound messages
+      const normalizedMessages = await adapter.normalizeInboundPayload(req.body);
+      const messageResults = [];
       for (const msg of normalizedMessages) {
         const result = await webhookService.ingestInboundMessage(msg);
-        results.push({
+        messageResults.push({
           messageId: result.message.id,
           externalMessageId: result.message.externalMessageId,
           deduplicated: result.deduplicated ?? false,
@@ -79,8 +77,9 @@ export class WebhookController {
         success: true,
         data: {
           channel,
-          processedCount: results.length,
-          messages: results,
+          processedCount: messageResults.length + statusResults.length,
+          messages: messageResults,
+          statuses: statusResults,
         },
       });
     } catch (error) {
@@ -88,5 +87,6 @@ export class WebhookController {
     }
   }
 }
+
 
 export const webhookController = new WebhookController();

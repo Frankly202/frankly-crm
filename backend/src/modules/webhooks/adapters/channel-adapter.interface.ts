@@ -36,11 +36,31 @@ export interface OutboundDeliveryResult {
   details?: Record<string, unknown>;
 }
 
+export interface NormalizedStatusUpdate {
+  channel: ChannelType;
+  externalMessageId: string;
+  status: 'SENT' | 'DELIVERED' | 'FAILED';
+  rawStatus: string;
+  timestamp: Date;
+  recipientIdentifier?: string;
+  rawPayload: Record<string, unknown>;
+  errorDetails?: {
+    code?: number;
+    title?: string;
+    message?: string;
+    details?: unknown;
+  };
+}
+
 export interface ChannelAdapter {
   readonly channel: ChannelType;
   verifyWebhookSignature(req: Request): boolean;
   normalizeInboundPayload(
     payload: unknown,
   ): NormalizedInboundMessage[] | Promise<NormalizedInboundMessage[]>;
+  normalizeStatusUpdates?(
+    payload: unknown,
+  ): NormalizedStatusUpdate[] | Promise<NormalizedStatusUpdate[]>;
   sendOutboundMessage(params: OutboundMessageParams): Promise<OutboundDeliveryResult>;
 }
+

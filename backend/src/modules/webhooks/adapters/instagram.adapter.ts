@@ -12,6 +12,8 @@ import { env } from '../../../config/env.js';
 import { BadGatewayError } from '../../../common/errors/app-error.js';
 import { logger } from '../../../common/utils/logger.js';
 
+import { verifyMetaSignature } from '../utils/meta-signature.util.js';
+
 interface MetaInstagramPayload {
   object?: string;
   entry?: Array<{
@@ -38,44 +40,9 @@ export class InstagramAdapter implements ChannelAdapter {
   readonly channel = ChannelType.INSTAGRAM;
 
   verifyWebhookSignature(req: Request): boolean {
-    const secret = process.env['META_APP_SECRET'] || env.META_APP_SECRET;
-
-    if (secret) {
-      const signatureHeader = req.headers['x-hub-signature-256'] as string | undefined;
-      if (!signatureHeader || !signatureHeader.startsWith('sha256=')) {
-        return false;
-      }
-
-      const rawBody = req.rawBody;
-      if (!rawBody) {
-        return false;
-      }
-
-      const expectedSignature = `sha256=${crypto
-        .createHmac('sha256', secret)
-        .update(rawBody)
-        .digest('hex')}`;
-
-      try {
-        const sigBuffer = Buffer.from(signatureHeader);
-        const expectedBuffer = Buffer.from(expectedSignature);
-        if (sigBuffer.length !== expectedBuffer.length) {
-          return false;
-        }
-        return crypto.timingSafeEqual(sigBuffer, expectedBuffer);
-      } catch {
-        return false;
-      }
-    }
-
-    // Fail closed in production or when live mode is active if secret is not configured
-    if (env.NODE_ENV === 'production' || env.PROVIDER_MODE === 'live') {
-      return false;
-    }
-
-    // In local non-production, explicitly allow only designated fixture test requests
-    return req.headers['x-local-fixture-test'] === 'true';
+    return verifyMetaSignature(req);
   }
+
 
   normalizeInboundPayload(payload: unknown): NormalizedInboundMessage[] {
     const data = payload as MetaInstagramPayload;

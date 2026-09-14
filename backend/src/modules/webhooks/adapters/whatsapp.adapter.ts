@@ -4,6 +4,7 @@ import { ChannelType } from '@prisma/client';
 import {
   ChannelAdapter,
   NormalizedInboundMessage,
+  NormalizedStatusUpdate,
   OutboundMessageParams,
   OutboundDeliveryResult,
 } from './channel-adapter.interface.js';
@@ -11,6 +12,7 @@ import { normalizePhone } from '../../../common/utils/identifier.util.js';
 import { env } from '../../../config/env.js';
 import { BadGatewayError } from '../../../common/errors/app-error.js';
 import { logger } from '../../../common/utils/logger.js';
+import { verifyMetaSignature } from '../utils/meta-signature.util.js';
 
 interface MetaWhatsAppPayload {
   object?: string;
@@ -38,6 +40,22 @@ interface MetaWhatsAppPayload {
           };
           type?: string;
         }>;
+        statuses?: Array<{
+          id?: string;
+          status?: string;
+          timestamp?: string;
+          recipient_id?: string;
+          conversation?: Record<string, unknown>;
+          pricing?: Record<string, unknown>;
+          errors?: Array<{
+            code?: number;
+            title?: string;
+            message?: string;
+            error_data?: {
+              details?: string;
+            };
+          }>;
+        }>;
       };
       field?: string;
     }>;
@@ -48,52 +66,94 @@ export class WhatsAppAdapter implements ChannelAdapter {
   readonly channel = ChannelType.WHATSAPP;
 
   verifyWebhookSignature(req: Request): boolean {
-    const secret = process.env['META_APP_SECRET'] || env.META_APP_SECRET;
-
-    if (secret) {
-      const signatureHeader = req.headers['x-hub-signature-256'] as string | undefined;
-      if (!signatureHeader || !signatureHeader.startsWith('sha256=')) {
-        return false;
-      }
-
-      const rawBody = req.rawBody;
-      if (!rawBody) {
-        return false;
-      }
-
-      const expectedSignature = `sha256=${crypto
-        .createHmac('sha256', secret)
-        .update(rawBody)
-        .digest('hex')}`;
-
-      try {
-        const sigBuffer = Buffer.from(signatureHeader);
-        const expectedBuffer = Buffer.from(expectedSignature);
-        if (sigBuffer.length !== expectedBuffer.length) {
-          return false;
-        }
-        return crypto.timingSafeEqual(sigBuffer, expectedBuffer);
-      } catch {
-        return false;
-      }
-    }
-
-    // Fail closed in production or when live mode is active if secret is not configured
-    if (env.NODE_ENV === 'production' || env.PROVIDER_MODE === 'live') {
-      return false;
-    }
-
-    // In local non-production, explicitly allow only designated fixture test requests
-    return req.headers['x-local-fixture-test'] === 'true';
+    return verifyMetaSignature(req);
   }
 
-  normalizeInboundPayload(payload: unknown): NormalizedInboundMessage[] {
+  normalizeStatusUpdates(payload: unknown): NormalizedStatusUpdate[] {
+    const updates: NormalizedStatusUpdate[] = [];
+
+    if (!payload || typeof payload !== 'object') {
+      return updates;
+    }
+
     const data = payload as MetaWhatsAppPayload;
+    if (!data.entry || !Array.isArray(data.entry)) {
+      return updates;
+    }
+
+
+    for (const entry of data.entry) {
+      for (const change of entry.changes || []) {
+        const val = change.value;
+        if (!val || !val.statuses || !Array.isArray(val.statuses)) {
+          continue;
+        }
+
+        for (const statusItem of val.statuses) {
+          if (!statusItem.id || !statusItem.status) {
+            continue;
+          }
+
+          const rawStatus = statusItem.status.toLowerCase();
+          let status: 'SENT' | 'DELIVERED' | 'FAILED';
+
+          if (rawStatus === 'sent') {
+            status = 'SENT';
+          } else if (rawStatus === 'delivered' || rawStatus === 'read') {
+            status = 'DELIVERED';
+          } else if (rawStatus === 'failed') {
+            status = 'FAILED';
+          } else {
+            continue;
+          }
+
+          const timestamp = statusItem.timestamp
+            ? new Date(parseInt(statusItem.timestamp, 10) * 1000)
+            : new Date();
+
+          let errorDetails: NormalizedStatusUpdate['errorDetails'] | undefined;
+          if (statusItem.errors && statusItem.errors.length > 0) {
+            const firstErr = statusItem.errors[0];
+            errorDetails = {
+              code: firstErr?.code,
+              title: firstErr?.title,
+              message: firstErr?.message || firstErr?.error_data?.details,
+              details: firstErr,
+            };
+          }
+
+          updates.push({
+            channel: ChannelType.WHATSAPP,
+            externalMessageId: statusItem.id,
+            status,
+            rawStatus,
+            timestamp,
+            recipientIdentifier: statusItem.recipient_id
+              ? normalizePhone(statusItem.recipient_id)
+              : undefined,
+            rawPayload: statusItem as unknown as Record<string, unknown>,
+            errorDetails,
+          });
+        }
+      }
+    }
+
+    return updates;
+  }
+
+
+  normalizeInboundPayload(payload: unknown): NormalizedInboundMessage[] {
     const messages: NormalizedInboundMessage[] = [];
 
+    if (!payload || typeof payload !== 'object') {
+      return messages;
+    }
+
+    const data = payload as MetaWhatsAppPayload;
     if (!data.entry || !Array.isArray(data.entry)) {
       return messages;
     }
+
 
     for (const entry of data.entry) {
       for (const change of entry.changes || []) {

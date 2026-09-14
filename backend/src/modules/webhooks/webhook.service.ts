@@ -12,9 +12,10 @@ import {
   Conversation,
   Message,
 } from '@prisma/client';
-import { NormalizedInboundMessage } from './adapters/channel-adapter.interface.js';
+import { NormalizedInboundMessage, NormalizedStatusUpdate } from './adapters/channel-adapter.interface.js';
 import { logger } from '../../common/utils/logger.js';
 import { normalizeEmail, normalizePhone } from '../../common/utils/identifier.util.js';
+
 
 export interface IngestResult {
   message: Message;
@@ -418,6 +419,91 @@ export class WebhookService {
       };
     });
   }
+
+  /**
+   * Idempotently update message delivery/read/failure status from webhook receipts.
+   */
+  async updateMessageStatus(update: NormalizedStatusUpdate): Promise<Message | null> {
+    const message = await prisma.message.findUnique({
+      where: { externalMessageId: update.externalMessageId },
+    });
+
+    if (!message) {
+      logger.info(
+        `Status callback for unknown externalMessageId: ${update.externalMessageId} (channel: ${update.channel}, status: ${update.rawStatus})`,
+      );
+      return null;
+    }
+
+    // Determine state transition hierarchy: PENDING -> SENT -> DELIVERED. FAILED is terminal failure.
+    // Out-of-order receipts must not regress a more advanced status.
+    let targetStatus = message.status;
+    let shouldUpdateStatus = false;
+
+    if (update.status === MessageStatus.FAILED) {
+      targetStatus = MessageStatus.FAILED;
+      shouldUpdateStatus = message.status !== MessageStatus.FAILED;
+    } else if (update.status === MessageStatus.DELIVERED) {
+      if (message.status === MessageStatus.PENDING || message.status === MessageStatus.SENT) {
+        targetStatus = MessageStatus.DELIVERED;
+        shouldUpdateStatus = true;
+      }
+    } else if (update.status === MessageStatus.SENT) {
+      if (message.status === MessageStatus.PENDING) {
+        targetStatus = MessageStatus.SENT;
+        shouldUpdateStatus = true;
+      }
+    }
+
+    // Merge status receipt metadata into rawPayload safely and idempotently
+    const existingPayload =
+      message.rawPayload && typeof message.rawPayload === 'object' && !Array.isArray(message.rawPayload)
+        ? (message.rawPayload as Record<string, unknown>)
+        : {};
+
+    const latestReceipt = {
+      rawStatus: update.rawStatus,
+      status: targetStatus,
+      timestamp: update.timestamp.toISOString(),
+      ...(update.errorDetails ? { error: update.errorDetails } : {}),
+    };
+
+    const mergedPayload: Record<string, unknown> = {
+      ...existingPayload,
+      latestStatusReceipt: latestReceipt,
+      ...(update.rawStatus === 'read' ? { readAt: update.timestamp.toISOString() } : {}),
+      ...(update.rawStatus === 'delivered' && !existingPayload['deliveredAt']
+        ? { deliveredAt: update.timestamp.toISOString() }
+        : {}),
+      ...(update.status === MessageStatus.FAILED
+        ? {
+            failedAt: update.timestamp.toISOString(),
+            failureReason:
+              update.errorDetails?.message || update.errorDetails?.title || 'Delivery failed',
+          }
+        : {}),
+    };
+
+    // If status didn't change and rawPayload is already up to date, short-circuit
+    if (!shouldUpdateStatus && update.rawStatus !== 'read' && update.status !== MessageStatus.FAILED) {
+      return message;
+    }
+
+    const updatedMessage = await prisma.message.update({
+      where: { id: message.id },
+      data: {
+        status: targetStatus,
+        rawPayload: mergedPayload as Prisma.InputJsonValue,
+      },
+    });
+
+    logger.info(
+      `Message ${message.id} status updated from ${message.status} to ${targetStatus} (externalId: ${update.externalMessageId}, rawStatus: ${update.rawStatus})`,
+    );
+
+    return updatedMessage;
+  }
 }
 
 export const webhookService = new WebhookService();
+
