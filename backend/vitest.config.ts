@@ -2,10 +2,8 @@ import { defineConfig } from 'vitest/config';
 import dotenv from 'dotenv';
 import path from 'path';
 
-// Load .env.test if DATABASE_URL is not set
-if (!process.env['DATABASE_URL']) {
-  dotenv.config({ path: path.resolve(__dirname, '.env.test') });
-}
+// Load .env.test with override to ensure test isolation from development credentials
+dotenv.config({ path: path.resolve(__dirname, '.env.test'), override: true });
 
 // Config-level pre-flight safety check
 const dbUrl = (process.env['DATABASE_URL'] || '').toLowerCase();

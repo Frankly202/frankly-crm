@@ -114,6 +114,19 @@ describe('WhatsApp Adapter & Meta Graph Error Mapping Unit Tests', () => {
       expect(err.code).toBe('BAD_REQUEST');
     });
 
+    it('should map code 100 with subcode 33 to BadGatewayError for unassigned asset', () => {
+      const err = parseMetaGraphError(400, {
+        error: {
+          code: 100,
+          error_subcode: 33,
+          message: 'Unsupported get request. Object does not exist or cannot be loaded due to missing permissions.',
+        },
+      });
+
+      expect(err.statusCode).toBe(502);
+      expect(err.message).toContain('Meta system user does not have permission to access this WhatsApp Phone Number');
+    });
+
     it('should default unrecognized errors to BAD_GATEWAY (502)', () => {
       const err = parseMetaGraphError(500, {
         error: {

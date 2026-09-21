@@ -106,8 +106,14 @@ export function parseMetaGraphError(
     );
   }
 
-  // 100: Invalid parameter / bad request
+  // 100: Invalid parameter / bad request or missing asset permission
   if (code === 100 || status === 400) {
+    if (subcode === 33) {
+      return new BadGatewayError(
+        'Meta system user does not have permission to access this WhatsApp Phone Number or Business Account. Ensure the WhatsApp Account asset is assigned to the System User in Meta Business Manager.',
+        { code, subcode, details: message },
+      );
+    }
     return new BadRequestError(`WhatsApp delivery failed: ${message}`, {
       code,
       subcode,

@@ -319,8 +319,8 @@ Establish a centralized, hardened webhook ingress layer for all Meta webhooks (`
 
 ### Phase 2: WhatsApp Business Cloud API Live Integration
 
-> **Status:** `[COMPLETED — ENGINE & 24H WINDOW ENFORCEMENT; LIVE META SEND PENDING FRANK'S CREDENTIALS]`  
-> **Execution Date:** 2026-09-14  
+> **Status:** `[LIVE INGRESS & ENGINE VERIFIED; LIVE OUTBOUND GATED ON META ASSET ASSIGNMENT & WABA PAYMENT METHOD]`  
+> **Execution Date:** 2026-09-14 (Engine & Window), 2026-09-21 (Production Verification)  
 > **Schema Migration:** None required.
 
 #### 1. Objective
@@ -349,6 +349,7 @@ Enable reliable two-way WhatsApp communication via Meta Cloud API v26.0+, correc
     - `130429` / `80007` / `429` -> `WHATSAPP_RATE_LIMIT_EXCEEDED` (HTTP 429)
     - `190` / `401` -> `BadGatewayError` (Meta system user access token expired)
     - `131042` -> `BadGatewayError` (WABA payment issue)
+    - `100` (subcode `33`) -> `BadGatewayError` (Meta system user missing WhatsApp Account asset assignment in Business Manager)
     - `100` -> `BadRequestError` (HTTP 400)
 - **24-Hour Customer Service Window Enforcement:**
   - Updated `ConversationService.sendOutboundMessage` in [conversation.service.ts](file:///Users/abrahamogbu/Developer/frankly-crm/backend/src/modules/conversations/conversation.service.ts):
@@ -364,26 +365,26 @@ Enable reliable two-way WhatsApp communication via Meta Cloud API v26.0+, correc
     - Shows an active window indicator in the composer footer when the 24h window is open.
     - Surfaces specialized toast error messages when `WHATSAPP_WINDOW_EXPIRED`, `WHATSAPP_RECIPIENT_NOT_ON_WHATSAPP`, or `WHATSAPP_RATE_LIMIT_EXCEEDED` occurs.
 - **Automated Tests:**
-  - Created [whatsapp-adapter.test.ts](file:///Users/abrahamogbu/Developer/frankly-crm/backend/tests/unit/whatsapp-adapter.test.ts) covering error mappings, media captions, tenant filtering, and mock vs live mode fail-closed behavior.
+  - Created [whatsapp-adapter.test.ts](file:///Users/abrahamogbu/Developer/frankly-crm/backend/tests/unit/whatsapp-adapter.test.ts) covering error mappings (including code 100 subcode 33), media captions, tenant filtering, and mock vs live mode fail-closed behavior.
   - Created [whatsapp-messaging-window.test.ts](file:///Users/abrahamogbu/Developer/frankly-crm/backend/tests/integration/whatsapp-messaging-window.test.ts) testing active window delivery, expired window 422 rejection, cold outbound rejection, non-extension from outbound messages, and `getConversationById` window state.
   - Updated [inbox.test.tsx](file:///Users/abrahamogbu/Developer/frankly-crm/frontend/src/test/inbox.test.tsx) testing expired window banner, active window indicator, and error toast handling.
 
-#### 4. Validation Results
-- **Backend Unit Tests:** 20/20 files passed, 157/157 tests passed (`npm --prefix backend run test:unit`).
-- **Backend Integration Tests:** 14/14 files passed, 123/123 tests passed (`npm --prefix backend run test:integration` against isolated `frankly_crm_test`).
-- **Backend Typecheck:** Clean (`tsc --noEmit` exited 0).
-- **Backend Lint:** Clean (`eslint .` exited 0).
-- **Backend Build:** Clean (`npm --prefix backend run build` exited 0).
-- **Frontend Tests:** 7/7 files passed, 48/48 tests passed (`npm --prefix frontend run test`).
-- **Frontend Lint:** Clean (`eslint .` exited 0).
-- **Frontend Build:** Clean (`npm --prefix frontend run build` exited 0).
-- **Production Safety:** Zero production DB connections, provider calls, migrations, or secret exposures.
+#### 4. Live Production Validation Results (Safe & Non-Billable)
+- **Live Webhook GET Challenge Handshake:** Verified against production Render deployment (`https://frankly-crm-backend.onrender.com/api/v1/webhooks/whatsapp`). Responds HTTP 200 echoing challenge with configured `META_VERIFY_TOKEN`; rejects unauthenticated requests with HTTP 401.
+- **Live Webhook POST HMAC Ingress:** Verified on production Render deployment. Request signed with SHA256 HMAC against `META_APP_SECRET` returns HTTP 200 `{ success: true }`; invalid signature returns HTTP 401.
+- **Meta App Webhook Subscription:** Verified active on Meta App `Frankly CRM` (`1804036004061867`) for object `whatsapp_business_account` pointing to Render callback URL with subscribed fields: `messages`, `message_template_status_update`, `phone_number_quality_update`, `account_alerts`, etc.
+- **Meta Access Token Audit:** Verified permanent System User Token via Graph API `/debug_token`. Valid token, permanent (`expires_at: 0`), associated with App `1804036004061867`, with scopes `whatsapp_business_messaging`, `whatsapp_business_management`, `business_management`.
+- **Backend Unit Tests:** 20/20 files passed, 158/158 tests passed (`npm --prefix backend run test:unit`).
+- **Backend Integration Tests:** 14/14 files passed, 123/123 tests passed (`npm --prefix backend run test:integration` against isolated local `frankly_crm_test`).
+- **Backend Typecheck & Lint:** Clean (0 TypeScript errors, 0 ESLint warnings/errors).
+- **Backend & Frontend Production Builds:** Clean production builds (`npm run build`).
 
-#### 5. Remaining Live Meta Dependencies (Frank)
-- Permanent System User Access Token (`WHATSAPP_ACCESS_TOKEN`).
-- WhatsApp Business Account ID (`WHATSAPP_BUSINESS_ACCOUNT_ID`).
-- Phone Number ID (`WHATSAPP_PHONE_NUMBER_ID`).
-- Registering Webhook URL in Meta App Dashboard pointing to `/api/v1/webhooks/whatsapp`.
+#### 5. Remaining Meta Business Dependencies (Frank)
+1. **Assign WhatsApp Account Asset to System User in Meta Business Manager:**
+   - In Meta Business Settings -> **Users -> System Users** -> select the System User (`Employee`) -> click **Add Assets** -> **WhatsApp Accounts** -> select WABA (`101287722940245`) -> toggle **Full Control (Manage WhatsApp Account)** -> Save Changes.
+   - Without asset assignment, Graph API queries and outbound sends for this specific WABA/Phone Number return code `100` subcode `33` (`Unsupported get request / missing permissions`).
+2. **Add Payment Method to WhatsApp Business Account:**
+   - Ensure a valid credit card or line of credit is added to the WhatsApp Business Account in Meta Business Manager to enable paid template and utility messaging outside the free tier.
 
 ---
 

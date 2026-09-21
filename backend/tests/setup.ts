@@ -13,10 +13,15 @@ import path from 'path';
  * If ANY condition is violated, test execution terminates immediately with exit code 1.
  */
 
-// If DATABASE_URL is not already set in process.env, load from .env.test
-if (!process.env['DATABASE_URL']) {
-  dotenv.config({ path: path.resolve(__dirname, '../.env.test') });
-}
+// Load .env.test with override to ensure test isolation from development credentials
+dotenv.config({ path: path.resolve(__dirname, '../.env.test'), override: true });
+
+import { env } from '../src/config/env.js';
+// Clean baseline test defaults to prevent local developer credentials from filtering unit fixtures
+env.WHATSAPP_BUSINESS_ACCOUNT_ID = undefined;
+env.WHATSAPP_PHONE_NUMBER_ID = undefined;
+env.WHATSAPP_ACCESS_TOKEN = undefined;
+env.PROVIDER_MODE = 'mock';
 
 export function assertSafeTestDatabase(url: string | undefined, varName: string): void {
   if (!url) {
