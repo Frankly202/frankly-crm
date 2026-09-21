@@ -127,6 +127,18 @@ describe('WhatsApp Adapter & Meta Graph Error Mapping Unit Tests', () => {
       expect(err.message).toContain('Meta system user does not have permission to access this WhatsApp Phone Number');
     });
 
+    it('should map code 133010 to BadGatewayError for unregistered/disconnected phone number', () => {
+      const err = parseMetaGraphError(400, {
+        error: {
+          code: 133010,
+          message: 'Account not registered',
+        },
+      });
+
+      expect(err.statusCode).toBe(502);
+      expect(err.message).toContain('WhatsApp phone number is not registered or connected with Cloud API');
+    });
+
     it('should default unrecognized errors to BAD_GATEWAY (502)', () => {
       const err = parseMetaGraphError(500, {
         error: {

@@ -319,8 +319,8 @@ Establish a centralized, hardened webhook ingress layer for all Meta webhooks (`
 
 ### Phase 2: WhatsApp Business Cloud API Live Integration
 
-> **Status:** `[LIVE INGRESS & ENGINE VERIFIED; LIVE OUTBOUND GATED ON META ASSET ASSIGNMENT & WABA PAYMENT METHOD]`  
-> **Execution Date:** 2026-09-14 (Engine & Window), 2026-09-21 (Production Verification)  
+> **Status:** `[LIVE INGRESS & ENGINE VERIFIED; LIVE OUTBOUND GATED ON PHONE NUMBER VERIFICATION & WABA PAYMENT METHOD]`  
+> **Execution Date:** 2026-09-14 (Engine & Window), 2026-09-21 (Production Verification & Asset Audit)  
 > **Schema Migration:** None required.
 
 #### 1. Objective
@@ -349,6 +349,7 @@ Enable reliable two-way WhatsApp communication via Meta Cloud API v26.0+, correc
     - `130429` / `80007` / `429` -> `WHATSAPP_RATE_LIMIT_EXCEEDED` (HTTP 429)
     - `190` / `401` -> `BadGatewayError` (Meta system user access token expired)
     - `131042` -> `BadGatewayError` (WABA payment issue)
+    - `133010` -> `BadGatewayError` (WhatsApp phone number not registered or connected with Cloud API)
     - `100` (subcode `33`) -> `BadGatewayError` (Meta system user missing WhatsApp Account asset assignment in Business Manager)
     - `100` -> `BadRequestError` (HTTP 400)
 - **24-Hour Customer Service Window Enforcement:**
@@ -365,26 +366,28 @@ Enable reliable two-way WhatsApp communication via Meta Cloud API v26.0+, correc
     - Shows an active window indicator in the composer footer when the 24h window is open.
     - Surfaces specialized toast error messages when `WHATSAPP_WINDOW_EXPIRED`, `WHATSAPP_RECIPIENT_NOT_ON_WHATSAPP`, or `WHATSAPP_RATE_LIMIT_EXCEEDED` occurs.
 - **Automated Tests:**
-  - Created [whatsapp-adapter.test.ts](file:///Users/abrahamogbu/Developer/frankly-crm/backend/tests/unit/whatsapp-adapter.test.ts) covering error mappings (including code 100 subcode 33), media captions, tenant filtering, and mock vs live mode fail-closed behavior.
+  - Created [whatsapp-adapter.test.ts](file:///Users/abrahamogbu/Developer/frankly-crm/backend/tests/unit/whatsapp-adapter.test.ts) covering error mappings (including 131047, 131026, 130429, 190, 131042, 133010, code 100 subcode 33), media captions, tenant filtering, and mock vs live mode fail-closed behavior.
   - Created [whatsapp-messaging-window.test.ts](file:///Users/abrahamogbu/Developer/frankly-crm/backend/tests/integration/whatsapp-messaging-window.test.ts) testing active window delivery, expired window 422 rejection, cold outbound rejection, non-extension from outbound messages, and `getConversationById` window state.
   - Updated [inbox.test.tsx](file:///Users/abrahamogbu/Developer/frankly-crm/frontend/src/test/inbox.test.tsx) testing expired window banner, active window indicator, and error toast handling.
 
 #### 4. Live Production Validation Results (Safe & Non-Billable)
+- **WABA & System User Asset Permissions:** Verified resolved. Querying `GET /101287722940245` returns HTTP 200 with WABA name `FranklyEdu Global`, currency `USD`, review status `APPROVED`.
+- **WABA Phone Number Registration:** Querying `GET /101287722940245/phone_numbers` returns HTTP 200 with phone number `+90 548 850 41 46` (`110969758627795`), verified name `FranklyEdu Global`, and webhook configuration confirmed pointing to `https://frankly-crm-backend.onrender.com/api/v1/webhooks/whatsapp`.
+- **Phone Number Connection Status Audit:** The phone number currently reports `status: 'DISCONNECTED'`, `code_verification_status: 'NOT_VERIFIED'`. Dry run message dispatches return Meta error code `133010` (`Account not registered`). The number must be verified via 6-digit SMS/voice PIN in WhatsApp Business Manager before live dispatches can be delivered.
 - **Live Webhook GET Challenge Handshake:** Verified against production Render deployment (`https://frankly-crm-backend.onrender.com/api/v1/webhooks/whatsapp`). Responds HTTP 200 echoing challenge with configured `META_VERIFY_TOKEN`; rejects unauthenticated requests with HTTP 401.
 - **Live Webhook POST HMAC Ingress:** Verified on production Render deployment. Request signed with SHA256 HMAC against `META_APP_SECRET` returns HTTP 200 `{ success: true }`; invalid signature returns HTTP 401.
 - **Meta App Webhook Subscription:** Verified active on Meta App `Frankly CRM` (`1804036004061867`) for object `whatsapp_business_account` pointing to Render callback URL with subscribed fields: `messages`, `message_template_status_update`, `phone_number_quality_update`, `account_alerts`, etc.
-- **Meta Access Token Audit:** Verified permanent System User Token via Graph API `/debug_token`. Valid token, permanent (`expires_at: 0`), associated with App `1804036004061867`, with scopes `whatsapp_business_messaging`, `whatsapp_business_management`, `business_management`.
-- **Backend Unit Tests:** 20/20 files passed, 158/158 tests passed (`npm --prefix backend run test:unit`).
+- **Backend Unit Tests:** 20/20 files passed, 159/159 tests passed (`npm --prefix backend run test:unit`).
 - **Backend Integration Tests:** 14/14 files passed, 123/123 tests passed (`npm --prefix backend run test:integration` against isolated local `frankly_crm_test`).
 - **Backend Typecheck & Lint:** Clean (0 TypeScript errors, 0 ESLint warnings/errors).
 - **Backend & Frontend Production Builds:** Clean production builds (`npm run build`).
 
 #### 5. Remaining Meta Business Dependencies (Frank)
-1. **Assign WhatsApp Account Asset to System User in Meta Business Manager:**
-   - In Meta Business Settings -> **Users -> System Users** -> select the System User (`Employee`) -> click **Add Assets** -> **WhatsApp Accounts** -> select WABA (`101287722940245`) -> toggle **Full Control (Manage WhatsApp Account)** -> Save Changes.
-   - Without asset assignment, Graph API queries and outbound sends for this specific WABA/Phone Number return code `100` subcode `33` (`Unsupported get request / missing permissions`).
+1. **Verify and Connect Phone Number in Meta WhatsApp Manager:**
+   - In Meta Business Settings -> **WhatsApp Accounts** -> select `FranklyEdu Global` -> **WhatsApp Manager** -> **Phone Numbers** -> complete the 6-digit SMS or voice verification code for `+90 548 850 41 46`.
+   - This transitions the phone number from `status: DISCONNECTED` to `status: CONNECTED` and resolves Meta Cloud API error `133010`.
 2. **Add Payment Method to WhatsApp Business Account:**
-   - Ensure a valid credit card or line of credit is added to the WhatsApp Business Account in Meta Business Manager to enable paid template and utility messaging outside the free tier.
+   - Ensure a valid payment method is attached to the WhatsApp Business Account in Meta Business Manager before initiating business-initiated / marketing templates outside the 24h customer service window.
 
 ---
 

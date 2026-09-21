@@ -106,6 +106,14 @@ export function parseMetaGraphError(
     );
   }
 
+  // 133010: Phone number not registered or disconnected
+  if (code === 133010) {
+    return new BadGatewayError(
+      'WhatsApp phone number is not registered or connected with Cloud API. Please complete phone number verification in WhatsApp Business Manager.',
+      { code, subcode, details: message },
+    );
+  }
+
   // 100: Invalid parameter / bad request or missing asset permission
   if (code === 100 || status === 400) {
     if (subcode === 33) {
