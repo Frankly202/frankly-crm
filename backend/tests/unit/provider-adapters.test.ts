@@ -125,7 +125,7 @@ describe('External Provider Adapters (Phase 9)', () => {
 
       const result = await instagramAdapter.sendOutboundMessage({
         conversationId: 'conv-2',
-        recipientIdentifier: 'ig_user_123',
+        recipientIdentifier: '17841400099887766',
         body: 'Hello from mock IG',
       });
 
@@ -141,7 +141,7 @@ describe('External Provider Adapters (Phase 9)', () => {
       await expect(
         instagramAdapter.sendOutboundMessage({
           conversationId: 'conv-2',
-          recipientIdentifier: 'ig_user_123',
+          recipientIdentifier: '17841400099887766',
           body: 'Hello from live IG',
         }),
       ).rejects.toThrow(BadGatewayError);
@@ -156,14 +156,14 @@ describe('External Provider Adapters (Phase 9)', () => {
         ok: true,
         status: 200,
         json: async () => ({
-          recipient_id: 'ig_user_123',
+          recipient_id: '17841400099887766',
           message_id: 'm_mid.1458175510252:169d56789',
         }),
       });
 
       const result = await instagramAdapter.sendOutboundMessage({
         conversationId: 'conv-2',
-        recipientIdentifier: 'ig_user_123',
+        recipientIdentifier: '17841400099887766',
         body: 'Real IG DM',
       });
 
@@ -345,7 +345,21 @@ describe('External Provider Adapters (Phase 9)', () => {
     });
 
     describe('Instagram Recipient Identifier Sanitization', () => {
-      it('should strip leading @ from Instagram handle when dispatching in live mode', async () => {
+      it('should reject non-numeric Instagram handles and require numerical IGSID', async () => {
+        env.PROVIDER_MODE = 'live';
+        env.INSTAGRAM_ACCESS_TOKEN = 'ig-test-token';
+        env.META_GRAPH_API_VERSION = 'v26.0';
+
+        await expect(
+          instagramAdapter.sendOutboundMessage({
+            conversationId: 'conv-2',
+            recipientIdentifier: '@maria_limassol',
+            body: 'Hello Maria',
+          }),
+        ).rejects.toThrow('must be a numerical Instagram Scoped ID (IGSID)');
+      });
+
+      it('should dispatch with numeric IGSID recipient in live mode', async () => {
         env.PROVIDER_MODE = 'live';
         env.INSTAGRAM_ACCESS_TOKEN = 'ig-test-token';
         env.META_GRAPH_API_VERSION = 'v26.0';
@@ -354,7 +368,7 @@ describe('External Provider Adapters (Phase 9)', () => {
           ok: true,
           status: 200,
           json: async () => ({
-            recipient_id: 'maria_limassol',
+            recipient_id: '17841400099887766',
             message_id: 'm_mid.1458175510252:169d56789',
           }),
         });
@@ -362,7 +376,7 @@ describe('External Provider Adapters (Phase 9)', () => {
 
         const result = await instagramAdapter.sendOutboundMessage({
           conversationId: 'conv-2',
-          recipientIdentifier: '@maria_limassol',
+          recipientIdentifier: '17841400099887766',
           body: 'Hello Maria',
         });
 
@@ -371,7 +385,7 @@ describe('External Provider Adapters (Phase 9)', () => {
           'https://graph.facebook.com/v26.0/me/messages',
           expect.objectContaining({
             body: JSON.stringify({
-              recipient: { id: 'maria_limassol' },
+              recipient: { id: '17841400099887766' },
               message: { text: 'Hello Maria' },
             }),
           }),

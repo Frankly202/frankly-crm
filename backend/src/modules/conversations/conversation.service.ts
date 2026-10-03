@@ -336,6 +336,7 @@ export class ConversationService {
 
     let messagingWindow: {
       isOpen: boolean;
+      isHumanAgentWindow?: boolean;
       expiresAt: string | null;
       latestInboundTimestamp: string | null;
     } | null = null;
@@ -365,6 +366,42 @@ export class ConversationService {
       } else {
         messagingWindow = {
           isOpen: false,
+          expiresAt: null,
+          latestInboundTimestamp: null,
+        };
+      }
+    } else if (conversation.channel === ChannelType.INSTAGRAM) {
+      const inboundMessages = conversation.messages.filter(
+        (m) => m.direction === MessageDirection.INBOUND,
+      );
+      const latestInbound =
+        inboundMessages.length > 0 ? inboundMessages[inboundMessages.length - 1] : null;
+
+      if (latestInbound) {
+        let providerDate: Date = latestInbound.createdAt;
+        const raw = latestInbound.rawPayload as Record<string, unknown> | null;
+        if (raw && typeof raw['timestamp'] === 'string' && /^\d+$/.test(raw['timestamp'])) {
+          providerDate = new Date(parseInt(raw['timestamp'], 10) * 1000);
+        } else if (raw && typeof raw['timestamp'] === 'number') {
+          providerDate = new Date(raw['timestamp'] * 1000);
+        }
+        const STANDARD_WINDOW_MS = 24 * 60 * 60 * 1000;
+        const HUMAN_AGENT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+        const elapsedMs = Date.now() - providerDate.getTime();
+        const isOpen = elapsedMs <= HUMAN_AGENT_WINDOW_MS;
+        const isHumanAgentWindow =
+          elapsedMs > STANDARD_WINDOW_MS && elapsedMs <= HUMAN_AGENT_WINDOW_MS;
+
+        messagingWindow = {
+          isOpen,
+          isHumanAgentWindow,
+          expiresAt: new Date(providerDate.getTime() + HUMAN_AGENT_WINDOW_MS).toISOString(),
+          latestInboundTimestamp: providerDate.toISOString(),
+        };
+      } else {
+        messagingWindow = {
+          isOpen: false,
+          isHumanAgentWindow: false,
           expiresAt: null,
           latestInboundTimestamp: null,
         };
@@ -438,6 +475,53 @@ export class ConversationService {
       }
     }
 
+    // Enforce Instagram 7-day customer service / human agent window
+    let isInstagramHumanAgent = false;
+    if (conversation.channel === ChannelType.INSTAGRAM) {
+      const latestInboundMessage = await prisma.message.findFirst({
+        where: {
+          conversationId,
+          direction: MessageDirection.INBOUND,
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      let providerDate: Date | null = null;
+      if (latestInboundMessage) {
+        const raw = latestInboundMessage.rawPayload as Record<string, unknown> | null;
+        if (raw && typeof raw['timestamp'] === 'string' && /^\d+$/.test(raw['timestamp'])) {
+          providerDate = new Date(parseInt(raw['timestamp'], 10) * 1000);
+        } else if (raw && typeof raw['timestamp'] === 'number') {
+          providerDate = new Date(raw['timestamp'] * 1000);
+        } else {
+          providerDate = latestInboundMessage.createdAt;
+        }
+      }
+
+      const STANDARD_WINDOW_MS = 24 * 60 * 60 * 1000;
+      const HUMAN_AGENT_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+      const elapsedMs = providerDate ? Date.now() - providerDate.getTime() : Infinity;
+
+      if (!providerDate || elapsedMs > HUMAN_AGENT_WINDOW_MS) {
+        const expiresAt = providerDate
+          ? new Date(providerDate.getTime() + HUMAN_AGENT_WINDOW_MS).toISOString()
+          : null;
+        throw new UnprocessableEntityError(
+          'Customer service window expired (>7d). Meta policy requires the Instagram user to initiate or resume the conversation.',
+          'INSTAGRAM_WINDOW_EXPIRED',
+          {
+            channel: ChannelType.INSTAGRAM,
+            windowExpiresAt: expiresAt,
+            latestInboundTimestamp: providerDate ? providerDate.toISOString() : null,
+          },
+        );
+      }
+
+      if (elapsedMs > STANDARD_WINDOW_MS && elapsedMs <= HUMAN_AGENT_WINDOW_MS) {
+        isInstagramHumanAgent = true;
+      }
+    }
+
     // Determine target recipient identifier based on channel
     let recipientIdentifier = '';
     if (conversation.channel === ChannelType.WHATSAPP) {
@@ -445,8 +529,13 @@ export class ConversationService {
     } else if (conversation.channel === ChannelType.RESEND_EMAIL) {
       recipientIdentifier = conversation.contact.primaryEmail || conversation.channelThreadId || '';
     } else if (conversation.channel === ChannelType.INSTAGRAM) {
-      recipientIdentifier =
-        conversation.channelThreadId || conversation.contact.instagramHandle || '';
+      // Outbound recipient strictly comes from verified conversation channelThreadId (numerical IGSID)
+      recipientIdentifier = conversation.channelThreadId?.trim() || '';
+      if (!recipientIdentifier || !/^\d+$/.test(recipientIdentifier)) {
+        throw new BadRequestError(
+          'Invalid Instagram recipient identifier: conversation channelThreadId must be a numerical IGSID',
+        );
+      }
     } else {
       recipientIdentifier =
         conversation.channelThreadId ||
@@ -501,11 +590,24 @@ export class ConversationService {
       subject,
       inReplyTo,
       references,
+      metadata: {
+        conversationId,
+        contactId: conversation.contactId,
+        leadId: conversation.leadId,
+        isHumanAgentWindow: isInstagramHumanAgent,
+      },
     });
 
     // Transactionally persist message, update conversation, and log activity
     return prisma.$transaction(async (tx) => {
       const now = new Date();
+
+      const senderIdentifier =
+        conversation.channel === ChannelType.INSTAGRAM
+          ? env.INSTAGRAM_BUSINESS_ACCOUNT_ID?.trim() ||
+            env.INSTAGRAM_PAGE_ID?.trim() ||
+            'FranklyEdu Instagram'
+          : currentUser?.email || 'FranklyEdu CRM';
 
       const message = await tx.message.create({
         data: {
@@ -516,7 +618,7 @@ export class ConversationService {
           subject,
           inReplyTo,
           references,
-          senderIdentifier: currentUser?.email || 'FranklyEdu CRM',
+          senderIdentifier,
           recipientIdentifier,
           externalMessageId: deliveryResult.externalMessageId,
           createdAt: deliveryResult.timestamp,

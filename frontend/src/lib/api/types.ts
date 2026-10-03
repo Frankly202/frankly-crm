@@ -153,6 +153,7 @@ export interface Conversation {
 
 export interface MessagingWindowState {
   isOpen: boolean;
+  isHumanAgentWindow?: boolean;
   expiresAt: string | null;
   latestInboundTimestamp: string | null;
 }

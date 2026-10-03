@@ -17,6 +17,7 @@ describe('Webhooks & Inbound Channel Ingestion Integration', () => {
           in: [
             'wamid.HBgLMzU3OTk0NDU1NjYVAgASGBQzQTU5NzNGODk4MDhD',
             'm_mid.1458175510252:169d56789',
+            'm_mid.1458175510252:subsequent_002',
             'email_rec_01J8K9L0M1N2P3Q4R5S6T7U8V9',
             'email_rec_metadata_only_001',
             'web_submission_cyprus_2026_001',
@@ -140,7 +141,7 @@ describe('Webhooks & Inbound Channel Ingestion Integration', () => {
   });
 
   describe('Instagram Inbound Processing', () => {
-    it('should ingest Instagram messaging webhook and resolve contact by Instagram handle', async () => {
+    it('should ingest Instagram messaging webhook, resolve/create contact, thread conversation with IGSID, and auto-create lead', async () => {
       const response = await request(app)
         .post('/api/v1/webhooks/instagram')
         .set('x-local-fixture-test', 'true')
@@ -153,12 +154,81 @@ describe('Webhooks & Inbound Channel Ingestion Integration', () => {
         where: { instagramHandle: '@maria_limassol' },
       });
       expect(contact).toBeDefined();
+      expect(contact?.name).toBe('@maria_limassol');
 
       const conversation = await prisma.conversation.findFirst({
         where: { contactId: contact!.id, channel: ChannelType.INSTAGRAM },
       });
       expect(conversation).toBeDefined();
+      // channelThreadId must strictly be the numerical IGSID
+      expect(conversation?.channelThreadId).toBe('17841400099887766');
       expect(conversation?.leadId).toBeDefined();
+
+      const message = await prisma.message.findUnique({
+        where: { externalMessageId: 'm_mid.1458175510252:169d56789' },
+      });
+      expect(message).toBeDefined();
+      // Explicit direction: inbound sender = customer IGSID, recipient = Frankly account ID
+      expect(message?.senderIdentifier).toBe('17841400099887766');
+      expect(message?.recipientIdentifier).toBe('17841400000000001');
+      expect(message?.senderName).toBe('@maria_limassol');
+    });
+
+    it('should deduplicate retransmitted Instagram webhooks', async () => {
+      const response = await request(app)
+        .post('/api/v1/webhooks/instagram')
+        .set('x-local-fixture-test', 'true')
+        .send(instagramFixture);
+
+      expect(response.status).toBe(200);
+      expect(response.body.data.messages[0].deduplicated).toBe(true);
+
+      const count = await prisma.message.count({
+        where: { externalMessageId: 'm_mid.1458175510252:169d56789' },
+      });
+      expect(count).toBe(1);
+    });
+
+    it('should resolve subsequent message from same IGSID to existing contact even when username is omitted', async () => {
+      const subsequentPayload = {
+        object: 'instagram',
+        entry: [
+          {
+            id: '17841400000000001',
+            time: 1725717700000,
+            messaging: [
+              {
+                sender: { id: '17841400099887766' },
+                recipient: { id: '17841400000000001' },
+                timestamp: 1725717700000,
+                message: {
+                  mid: 'm_mid.1458175510252:subsequent_002',
+                  text: 'Following up on my property query',
+                },
+              },
+            ],
+          },
+        ],
+      };
+
+      const response = await request(app)
+        .post('/api/v1/webhooks/instagram')
+        .set('x-local-fixture-test', 'true')
+        .send(subsequentPayload);
+
+      expect(response.status).toBe(200);
+      expect(response.body.success).toBe(true);
+
+      // Contact must be the same existing contact
+      const contact = await prisma.contact.findUnique({
+        where: { instagramHandle: '@maria_limassol' },
+      });
+      expect(contact).toBeDefined();
+
+      const messages = await prisma.message.findMany({
+        where: { conversation: { contactId: contact!.id } },
+      });
+      expect(messages.length).toBe(2);
     });
   });
 

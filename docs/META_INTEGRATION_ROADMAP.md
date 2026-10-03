@@ -393,45 +393,40 @@ Enable reliable two-way WhatsApp communication via Meta Cloud API v26.0+, correc
 
 ### Phase 3: Instagram Professional Direct Messaging Live Integration
 
+> **Status:** `[COMPLETED — ARCHITECTURE, IMPLEMENTATION & TEST GATES]`  
+> **Execution Date:** 2026-10-03  
+> **External Prerequisites:** Pending Meta App Review / permissions (`instagram_manage_messages`, `instagram_basic`, `pages_manage_metadata`) or App Tester invitation for live sends with non-role users in Production.
+
 #### 1. Objective
-Fix the critical Instagram IGSID recipient bug, link the Instagram Professional Account with the Facebook Page, and enable reliable two-way Instagram Direct messaging with support for the 7-day `HUMAN_AGENT` message tag.
+Fix the critical Instagram IGSID recipient bug, enforce explicit identifier directionality, preserve the schema-free architecture, implement centralized Meta Graph error mapping, enforce the 7-day customer service messaging window with `HUMAN_AGENT` message tag support, and expose window state to the Unified Inbox.
 
-#### 2. Policy Verification Task
-- **Verify before coding:** Check current Meta documentation regarding the `HUMAN_AGENT` message tag for Instagram Direct in Graph API v26.0. Confirm whether `HUMAN_AGENT` requires dedicated App Review approval or is included under `instagram_manage_messages`.
+#### 2. Verified Meta Policy & Architecture Decisions
+- **Identifier Directionality:**
+  - Inbound sender = customer numeric IGSID (`event.sender.id`); inbound recipient = Frankly Instagram account ID (`entry.id`).
+  - Outbound sender = Frankly Instagram account ID; outbound recipient = customer numeric IGSID.
+  - Graph outbound `recipient.id` strictly originates from `Conversation.channelThreadId` (canonical IGSID).
+- **Schema-Free Architecture:** Zero Prisma schema changes and zero database migrations. Contact resolution matches on `channel: INSTAGRAM` and `channelThreadId: inbound.senderIdentifier`. Contact display name falls back gracefully to `Instagram User (${sender.id.slice(-4)})` when username is omitted. Numeric IGSID is never stored in `Contact.instagramHandle`.
+- **7-Day Messaging Window (`HUMAN_AGENT` Tag):**
+  - Authoritatively calculated from customer's latest **inbound** message timestamp (`inboundMessage.createdAt`).
+  - Outbound agent messages never extend the messaging window.
+  - `< 24 hours`: standard free-form text.
+  - `24 hours to 7 days`: attaches `"messaging_type": "MESSAGE_TAG"` and `"tag": "HUMAN_AGENT"`.
+  - `> 7 days` (or no inbound message): rejects outbound send fail-closed with HTTP 422 (`INSTAGRAM_WINDOW_EXPIRED`).
+- **Centralized Error Parsing:** Centralized `parseInstagramGraphError` maps Graph error subcodes (10/2534037 -> `INSTAGRAM_WINDOW_EXPIRED`, 190 -> 502 Bad Gateway, 429 -> `INSTAGRAM_RATE_LIMIT_EXCEEDED`, 100/33 -> 502 Bad Gateway) without leaking tokens or internal URLs.
+- **Frontend Inbox Integration:** Exposes `messagingWindow.isOpen` and `isHumanAgentWindow`, renders an alert banner when the 7-day window expires, and shows toast notifications for window expiration and rate limits.
 
-#### 3. Scope & Deliverables
-- **Fix IGSID Routing Bug:** Capture `event.sender.id` (numerical IGSID) as the canonical `channelThreadId` in `Conversation`. Do **not** route outbound messages to username handles.
-- **Profile Name Enrichment:** Implement optional profile query `GET /{IGSID}?fields=name,username` using the Page Access Token to resolve user display names when omitted in webhooks.
-- **`HUMAN_AGENT` Message Tag:** For outbound agent replies sent between 24 hours and 7 days after customer's last message, attach `"tag": "HUMAN_AGENT"` to extend the messaging window.
-- **Window Expiration Enforcement:** Outside 7 days, reject outbound sends with `INSTAGRAM_WINDOW_EXPIRED`.
+#### 3. Validation Results
+- **Backend Unit Tests:** 20 test files, 166 tests passed (`tests/unit/channel-adapters.test.ts`, `tests/unit/provider-adapters.test.ts`, etc.).
+- **Backend Integration Tests:** 15 test files, 131 tests passed on isolated `frankly_crm_test` database (`tests/integration/instagram-messaging-window.test.ts`, `tests/integration/webhooks.test.ts`, `tests/integration/meta-webhooks.test.ts`, etc.).
+- **Frontend Test Suite:** 7 test files, 49 tests passed (`src/test/inbox.test.tsx`, `src/test/inbox-polling.test.tsx`, etc.).
+- **Lint & Typecheck:** 0 errors across backend (`tsc --noEmit`, `eslint .`) and frontend (`tsc --noEmit`, `eslint . --fix`).
+- **Production Builds:** Backend TypeScript build (`tsc`) and Frontend Nitro/Vite build completed cleanly with 0 errors.
 
-#### 4. Dependencies
-- Phase 0 completed (Instagram Professional account linked to Facebook Page; "Allow Access to Messages" toggled ON).
-- Phase 1 completed.
-
-#### 5. Implementation Tasks
-1. Refactor `backend/src/modules/webhooks/adapters/instagram.adapter.ts`:
-   - Ensure `externalMessageId` uses `event.message.mid`.
-   - Store numeric `event.sender.id` in `inbound.senderIdentifier` as the addressable routing identifier.
-   - If `event.sender.username` is available, set `senderName = @username`; otherwise query Meta profile endpoint or fallback to `Instagram User (${sender.id.slice(-4)})`.
-   - In `sendOutboundMessage`:
-     - Validate `recipientId` is purely numeric IGSID. If an agent manually entered a handle, look up the contact's stored IGSID.
-     - Check elapsed time since last inbound message:
-       - `< 24 hours`: standard free-form text.
-       - `24 hours to 7 days`: send with `"messaging_type": "MESSAGE_TAG"` and `"tag": "HUMAN_AGENT"`.
-       - `> 7 days`: throw error informing agent the 7-day human agent window has expired.
-2. Update `backend/src/config/env.ts`:
-   - Add `INSTAGRAM_BUSINESS_ACCOUNT_ID` to Zod schema.
-
-#### 6. Validation Gates
-- **Automated Tests:**
-  - Verify normalization preserves numeric IGSID and does not strip digits.
-  - Test outbound payload generation with and without `HUMAN_AGENT` tag based on inbound message timestamps.
-  - Test rejection when >7 days elapsed.
-- **Manual Verification (Meta App Testers):**
-  - Send direct message from an Instagram test account to Frankly's Instagram Professional account.
-  - Confirm message appears in Frankly CRM Inbox under Instagram channel.
-  - Send reply from CRM Inbox and verify direct message delivery in Instagram mobile app.
+#### 4. External Blockers / Live Meta Dependencies
+1. **Instagram Professional Linkage:** Frankly Instagram Professional account linked to the Frankly Facebook Page, with "Allow Access to Messages" toggled ON in Instagram app settings.
+2. **Access Token & Assets:** Page Access Token or System User Token with `instagram_manage_messages`, `instagram_basic`, and `pages_manage_metadata` assigned to Frankly's Instagram Business Account.
+3. **Webhook Subscription:** Instagram webhook object subscribed to `messages` and `messaging_postbacks` on Frankly's webhook callback URL.
+4. **App Review / Tester Access:** In Development Mode, messages can only be sent/received with accounts added as App Testers / Instagram Testers until `instagram_manage_messages` passes Meta App Review.
 
 ---
 

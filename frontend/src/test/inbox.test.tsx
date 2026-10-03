@@ -335,4 +335,31 @@ describe("Unified Inbox Route Component", () => {
       }),
     );
   });
+
+  it("should display dedicated toast when reply fails with INSTAGRAM_WINDOW_EXPIRED", async () => {
+    const errorSpy = vi.spyOn(toast, "error");
+    mockMutateSendMessage.mockRejectedValueOnce(
+      new ApiError(422, "INSTAGRAM_WINDOW_EXPIRED", "Window expired (>7d)"),
+    );
+
+    mockSearch = { conversationId: "cv-001" };
+    const Component = (Route as unknown as { component: React.ComponentType }).component;
+    renderWithClient(<Component />);
+
+    const textarea = screen.getByPlaceholderText(/Reply via WhatsApp/i);
+    await React.act(async () => {
+      fireEvent.change(textarea, {
+        target: { value: "Reply outside Instagram window" },
+      });
+      const sendBtn = screen.getByRole("button", { name: "Send reply" });
+      fireEvent.click(sendBtn);
+    });
+
+    expect(errorSpy).toHaveBeenCalledWith(
+      "7-Day Instagram Window Expired",
+      expect.objectContaining({
+        description: expect.stringContaining(">7 days elapsed"),
+      }),
+    );
+  });
 });

@@ -3,7 +3,10 @@ import crypto from 'crypto';
 import { Request } from 'express';
 import { env } from '../../src/config/env.js';
 import { whatsAppAdapter } from '../../src/modules/webhooks/adapters/whatsapp.adapter.js';
-import { instagramAdapter } from '../../src/modules/webhooks/adapters/instagram.adapter.js';
+import {
+  instagramAdapter,
+  parseInstagramGraphError,
+} from '../../src/modules/webhooks/adapters/instagram.adapter.js';
 import { resendEmailAdapter } from '../../src/modules/webhooks/adapters/resend.adapter.js';
 import { websiteFormAdapter } from '../../src/modules/webhooks/adapters/website.adapter.js';
 import { ChannelType, LeadCategory } from '@prisma/client';
@@ -75,16 +78,200 @@ describe('Channel Adapters Unit Tests', () => {
   });
 
   describe('InstagramAdapter', () => {
-    it('should correctly normalize Meta Instagram messaging fixture', () => {
+    it('should correctly normalize Meta Instagram messaging fixture with numeric IGSID and username handle', () => {
       const messages = instagramAdapter.normalizeInboundPayload(instagramFixture);
       expect(messages.length).toBe(1);
 
       const msg = messages[0];
       expect(msg?.channel).toBe(ChannelType.INSTAGRAM);
-      expect(msg?.senderIdentifier).toBe('@maria_limassol');
+      // Sender identifier must strictly be numeric IGSID
+      expect(msg?.senderIdentifier).toBe('17841400099887766');
       expect(msg?.senderName).toBe('@maria_limassol');
+      expect(msg?.recipientIdentifier).toBe('17841400000000001');
       expect(msg?.body).toContain('property investments in Paphos');
       expect(msg?.externalMessageId).toBe('m_mid.1458175510252:169d56789');
+    });
+
+    it('should normalize Instagram payload gracefully when username is omitted', () => {
+      const payloadWithoutUsername = {
+        object: 'instagram',
+        entry: [
+          {
+            id: '17841400000000001',
+            time: 1725717600000,
+            messaging: [
+              {
+                sender: { id: '17841400011223344' },
+                recipient: { id: '17841400000000001' },
+                timestamp: 1725717600000,
+                message: {
+                  mid: 'm_mid_anon_123',
+                  text: 'Hi Frankly',
+                },
+              },
+            ],
+          },
+        ],
+      };
+
+      const messages = instagramAdapter.normalizeInboundPayload(payloadWithoutUsername);
+      expect(messages.length).toBe(1);
+      const msg = messages[0];
+      expect(msg?.senderIdentifier).toBe('17841400011223344');
+      expect(msg?.senderName).toBe('Instagram User (3344)');
+      expect(msg?.body).toBe('Hi Frankly');
+    });
+
+    it('should filter out foreign Instagram accounts when INSTAGRAM_BUSINESS_ACCOUNT_ID is configured', () => {
+      vi.stubEnv('INSTAGRAM_BUSINESS_ACCOUNT_ID', '17841400000000001');
+
+      const foreignPayload = {
+        object: 'instagram',
+        entry: [
+          {
+            id: 'foreign_account_99999',
+            time: 1725717600000,
+            messaging: [
+              {
+                sender: { id: '17841400099887766' },
+                message: { mid: 'mid_foreign_1', text: 'Spam' },
+              },
+            ],
+          },
+          {
+            id: '17841400000000001',
+            time: 1725717600000,
+            messaging: [
+              {
+                sender: { id: '17841400099887766' },
+                message: { mid: 'mid_valid_1', text: 'Valid message' },
+              },
+            ],
+          },
+        ],
+      };
+
+      const messages = instagramAdapter.normalizeInboundPayload(foreignPayload);
+      expect(messages.length).toBe(1);
+      expect(messages[0]?.externalMessageId).toBe('mid_valid_1');
+      vi.unstubAllEnvs();
+    });
+
+    it('should reject outbound sends with non-numeric recipient identifier', async () => {
+      await expect(
+        instagramAdapter.sendOutboundMessage({
+          conversationId: 'conv-1',
+          recipientIdentifier: '@maria_limassol',
+          body: 'Hello',
+        }),
+      ).rejects.toThrow('must be a numerical Instagram Scoped ID (IGSID)');
+
+      await expect(
+        instagramAdapter.sendOutboundMessage({
+          conversationId: 'conv-1',
+          recipientIdentifier: '',
+          body: 'Hello',
+        }),
+      ).rejects.toThrow('must be a numerical Instagram Scoped ID (IGSID)');
+    });
+
+    it('should send simulated outbound message in mock mode preserving recipient and window tag flag', async () => {
+      vi.stubEnv('PROVIDER_MODE', 'mock');
+
+      const resultStandard = await instagramAdapter.sendOutboundMessage({
+        conversationId: 'conv-1',
+        recipientIdentifier: '17841400099887766',
+        body: 'Standard reply',
+        metadata: { isHumanAgentWindow: false },
+      });
+
+      expect(resultStandard.success).toBe(true);
+      expect(resultStandard.details?.['recipient']).toBe('17841400099887766');
+      expect(resultStandard.details?.['isHumanAgentWindow']).toBe(false);
+
+      const resultHumanAgent = await instagramAdapter.sendOutboundMessage({
+        conversationId: 'conv-1',
+        recipientIdentifier: '17841400099887766',
+        body: 'Extended window reply',
+        metadata: { isHumanAgentWindow: true },
+      });
+
+      expect(resultHumanAgent.success).toBe(true);
+      expect(resultHumanAgent.details?.['isHumanAgentWindow']).toBe(true);
+
+      vi.unstubAllEnvs();
+    });
+
+    it('should format live request with HUMAN_AGENT message tag when isHumanAgentWindow is true', async () => {
+      vi.stubEnv('PROVIDER_MODE', 'live');
+      vi.stubEnv('INSTAGRAM_ACCESS_TOKEN', 'test_ig_page_access_token');
+
+      let capturedBody: Record<string, unknown> | null = null;
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = vi.fn().mockImplementation(async (_url, opts) => {
+        capturedBody = JSON.parse(opts.body);
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            message_id: 'ig_mid_12345',
+            recipient_id: '17841400099887766',
+          }),
+        };
+      });
+
+      const res = await instagramAdapter.sendOutboundMessage({
+        conversationId: 'conv-1',
+        recipientIdentifier: '17841400099887766',
+        body: 'Support follow up after 24h',
+        metadata: { isHumanAgentWindow: true },
+      });
+
+      expect(res.success).toBe(true);
+      expect(res.externalMessageId).toBe('ig_mid_12345');
+      expect(capturedBody).toEqual({
+        recipient: { id: '17841400099887766' },
+        message: { text: 'Support follow up after 24h' },
+        messaging_type: 'MESSAGE_TAG',
+        tag: 'HUMAN_AGENT',
+      });
+
+      globalThis.fetch = originalFetch;
+      vi.unstubAllEnvs();
+    });
+
+    it('should map Instagram Graph API errors accurately in parseInstagramGraphError', () => {
+      // Window expired / unsupported message tag
+      const errWindow = parseInstagramGraphError(400, {
+        error: { message: 'Message outside window', code: 10, error_subcode: 2534037 },
+      });
+      expect(errWindow.statusCode).toBe(422);
+      expect(errWindow.code).toBe('INSTAGRAM_WINDOW_EXPIRED');
+
+      // Token invalid / expired
+      const errToken = parseInstagramGraphError(401, {
+        error: { message: 'Session invalid', code: 190 },
+      });
+      expect(errToken.statusCode).toBe(502);
+
+      // Rate limit hit
+      const errRate = parseInstagramGraphError(429, {
+        error: { message: 'Too many calls', code: 429 },
+      });
+      expect(errRate.statusCode).toBe(429);
+      expect(errRate.code).toBe('INSTAGRAM_RATE_LIMIT_EXCEEDED');
+
+      // Missing asset permissions (subcode 33)
+      const errPerm = parseInstagramGraphError(400, {
+        error: { message: 'Asset not assigned', code: 100, error_subcode: 33 },
+      });
+      expect(errPerm.statusCode).toBe(502);
+
+      // General invalid parameter
+      const errBadParam = parseInstagramGraphError(400, {
+        error: { message: 'Invalid recipient', code: 100 },
+      });
+      expect(errBadParam.statusCode).toBe(400);
     });
 
     it('should fail closed when signature is invalid or missing', () => {

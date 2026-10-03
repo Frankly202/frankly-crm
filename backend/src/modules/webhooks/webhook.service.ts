@@ -88,9 +88,20 @@ export class WebhookService {
         where: { primaryPhone: inbound.senderIdentifier },
       });
     } else if (inbound.channel === ChannelType.INSTAGRAM) {
-      contact = await tx.contact.findUnique({
-        where: { instagramHandle: inbound.senderIdentifier },
+      const existingConv = await tx.conversation.findFirst({
+        where: {
+          channel: ChannelType.INSTAGRAM,
+          channelThreadId: inbound.senderIdentifier,
+        },
+        include: { contact: true },
       });
+      if (existingConv?.contact) {
+        contact = existingConv.contact;
+      } else if (inbound.senderName && inbound.senderName.startsWith('@')) {
+        contact = await tx.contact.findUnique({
+          where: { instagramHandle: inbound.senderName },
+        });
+      }
     } else if (inbound.channel === ChannelType.RESEND_EMAIL) {
       contact = await tx.contact.findUnique({
         where: { primaryEmail: inbound.senderIdentifier },
@@ -128,7 +139,10 @@ export class WebhookService {
     const contactData: Prisma.ContactCreateInput = {
       name: inbound.senderName || inbound.senderIdentifier,
       primaryPhone: inbound.channel === ChannelType.WHATSAPP ? inbound.senderIdentifier : null,
-      instagramHandle: inbound.channel === ChannelType.INSTAGRAM ? inbound.senderIdentifier : null,
+      instagramHandle:
+        inbound.channel === ChannelType.INSTAGRAM && inbound.senderName?.startsWith('@')
+          ? inbound.senderName
+          : null,
       primaryEmail: inbound.channel === ChannelType.RESEND_EMAIL ? inbound.senderIdentifier : null,
     };
 

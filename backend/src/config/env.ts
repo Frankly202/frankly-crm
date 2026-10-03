@@ -41,6 +41,7 @@ export const envSchema = z
     WHATSAPP_BUSINESS_ACCOUNT_ID: z.string().optional(),
     WHATSAPP_PHONE_NUMBER_ID: z.string().optional(),
     WHATSAPP_ACCESS_TOKEN: z.string().optional(),
+    INSTAGRAM_BUSINESS_ACCOUNT_ID: z.string().optional(),
     INSTAGRAM_PAGE_ID: z.string().optional(),
     INSTAGRAM_ACCESS_TOKEN: z.string().optional(),
     RESEND_API_KEY: z.string().optional(),

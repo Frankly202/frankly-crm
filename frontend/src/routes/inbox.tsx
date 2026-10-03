@@ -192,6 +192,15 @@ function InboxPage() {
         toast.error("Rate Limit Exceeded", {
           description: "WhatsApp API throughput limit reached. Please wait a moment.",
         });
+      } else if (err instanceof ApiError && err.code === "INSTAGRAM_WINDOW_EXPIRED") {
+        toast.error("7-Day Instagram Window Expired", {
+          description:
+            "Replies cannot be sent because >7 days elapsed since customer's last message. The user must message first.",
+        });
+      } else if (err instanceof ApiError && err.code === "INSTAGRAM_RATE_LIMIT_EXCEEDED") {
+        toast.error("Rate Limit Exceeded", {
+          description: "Instagram API throughput limit reached. Please wait a moment.",
+        });
       } else {
         toast.error("Failed to send message", {
           description: err instanceof Error ? err.message : "Network error",
@@ -600,6 +609,26 @@ function InboxPage() {
                           More than 24 hours have passed since the customer's last message.
                           Free-form replies will fail until the customer reaches out again or a
                           template is sent.
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                {convDetail.channel === "INSTAGRAM" &&
+                  convDetail.messagingWindow &&
+                  !convDetail.messagingWindow.isOpen && (
+                    <div
+                      data-testid="instagram-window-expired-banner"
+                      className="mb-2.5 flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 text-xs text-amber-800 dark:text-amber-300"
+                    >
+                      <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
+                      <div className="flex-1 leading-snug">
+                        <span className="font-semibold">
+                          Instagram 7-Day Customer Service Window Expired.
+                        </span>{" "}
+                        <span>
+                          More than 7 days have passed since the customer's last message. Replies
+                          cannot be sent until the customer reaches out again.
                         </span>
                       </div>
                     </div>
