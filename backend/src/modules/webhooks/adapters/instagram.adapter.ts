@@ -59,11 +59,27 @@ export function parseInstagramGraphError(
   const code = err?.code;
   const subcode = err?.error_subcode;
 
-  // 10 or subcode 2534037: Outside 24h / message tag issue
-  if (code === 10 || subcode === 2534037) {
+  // Subcode 2534037/2018065 or code 10 with explicit window/tag context: Outside 24h / message tag issue
+  const isWindowViolation =
+    subcode === 2534037 ||
+    subcode === 2018065 ||
+    (code === 10 &&
+      (subcode === 2534037 ||
+        subcode === 2018065 ||
+        /window|message tag|24 hour|human agent/i.test(message)));
+
+  if (isWindowViolation) {
     return new UnprocessableEntityError(
       'Customer service window expired or unsupported message tag. Instagram requires an active window or approved Human Agent tag to contact users.',
       'INSTAGRAM_WINDOW_EXPIRED',
+      { code, subcode, details: message },
+    );
+  }
+
+  // Generic code 10 without window subcode: Meta permission denied
+  if (code === 10) {
+    return new BadGatewayError(
+      `Meta permission denied for Instagram operation: ${message}`,
       { code, subcode, details: message },
     );
   }

@@ -248,6 +248,13 @@ describe('Channel Adapters Unit Tests', () => {
       expect(errWindow.statusCode).toBe(422);
       expect(errWindow.code).toBe('INSTAGRAM_WINDOW_EXPIRED');
 
+      // Generic code 10 without window subcode/context: must be BadGatewayError (502), NOT INSTAGRAM_WINDOW_EXPIRED
+      const errGeneric10 = parseInstagramGraphError(403, {
+        error: { message: 'Application does not have permission for this action', code: 10 },
+      });
+      expect(errGeneric10.statusCode).toBe(502);
+      expect(errGeneric10.code).toBe('BAD_GATEWAY');
+
       // Token invalid / expired
       const errToken = parseInstagramGraphError(401, {
         error: { message: 'Session invalid', code: 190 },
